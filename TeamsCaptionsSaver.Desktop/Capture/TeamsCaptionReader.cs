@@ -33,7 +33,7 @@ public sealed class TeamsCaptionReader : IDisposable
     private static readonly TimeSpan IdleFullScanInterval = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan AutoEnableDelay = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan AutoEnableRetry = TimeSpan.FromSeconds(20);
-    private const int MaxAutoEnableAttempts = 2;
+    private const int MaxAutoEnableAttempts = 3;
 
     private readonly CacheRequest _subtreeRequest;
     private CancellationTokenSource? _cts;
@@ -46,6 +46,7 @@ public sealed class TeamsCaptionReader : IDisposable
     private AutomationElement? _hangupButton;
     private AutomationElement? _captionsContainer;
     private AutomationElement? _meetingDocument;
+    private IntPtr _meetingWindow;
     private string _meetingTitle = "";
 
     private bool _wasInMeeting;
@@ -188,6 +189,7 @@ public sealed class TeamsCaptionReader : IDisposable
         _hangupButton = null;
         _captionsContainer = null;
         _meetingDocument = null;
+        _meetingWindow = IntPtr.Zero;
     }
 
     // --- Locating Teams ----------------------------------------------------------------------
@@ -226,7 +228,7 @@ public sealed class TeamsCaptionReader : IDisposable
     /// <summary>Scans every Teams document for the Leave button and the live-captions region.</summary>
     private void FullScan()
     {
-        foreach (var (_, root, windowTitle) in _documents)
+        foreach (var (hostWindow, root, windowTitle) in _documents)
         {
             UiNode tree;
             try
@@ -246,6 +248,7 @@ public sealed class TeamsCaptionReader : IDisposable
             {
                 _hangupButton = (AutomationElement?)hangup.Source;
                 _meetingDocument = root;
+                _meetingWindow = Native.GetAncestor(hostWindow, Native.GA_ROOT);
                 _meetingTitle = CleanTitle(windowTitle);
             }
             if (container != null && _captionsContainer == null)
@@ -348,10 +351,14 @@ public sealed class TeamsCaptionReader : IDisposable
                 return;
             }
 
-            if (TryToolbarCaptionsButton(doc) || TryMoreMenu(doc))
+            if (TryToolbarCaptionsButton(doc) || TryMoreMenu(doc) || TryKeyboardShortcut(doc))
             {
                 _autoEnableAttempts = MaxAutoEnableAttempts;
                 _lastFullScan = DateTime.MinValue; // look for the captions region right away
+            }
+            else if (_autoEnableAttempts >= MaxAutoEnableAttempts)
+            {
+                LogCaptionsControls(doc);
             }
         }
         catch (Exception ex)
@@ -379,29 +386,115 @@ public sealed class TeamsCaptionReader : IDisposable
     {
         var more = FindById(doc, MoreButtonId);
         if (more == null) { Log.Write("Auto-enable: 'More' button not found."); return false; }
+        bool pressed = false;
         try
         {
             Activate(more);
 
-            var language = FindById(doc, LanguageSpeechMenuId, waitForIt: true);
-            if (language == null) { Log.Write("Auto-enable: 'Language and speech' not found."); return false; }
-            Activate(language);
-
-            var captions = FindById(doc, CaptionsMenuItemId, waitForIt: true);
-            if (captions == null) { Log.Write("Auto-enable: 'Show live captions' not found."); return false; }
+            var captions = FindCaptionsMenuEntry(doc, wait: true);
+            if (captions == null)
+            {
+                var language = FindById(doc, LanguageSpeechMenuId);
+                if (language != null)
+                {
+                    Activate(language);
+                    captions = FindCaptionsMenuEntry(doc, wait: true);
+                }
+            }
+            if (captions == null)
+            {
+                Log.Write("Auto-enable: no Captions entry in the More menu.");
+                return false;
+            }
             if (IsCaptionsOn(captions))
             {
-                Log.Write($"Auto-enable: live captions are already on ('{captions.Current.Name}').");
+                Log.Write($"Auto-enable: the More menu says captions are already on ('{captions.Current.Name}').");
                 return true;
             }
-            Activate(captions);
-            Log.Write($"Auto-enable: turned on '{captions.Current.Name}'.");
-            return true;
+            Press(captions);
+            pressed = true;
         }
         finally
         {
             Thread.Sleep(300);
             CloseMenu(more);
+        }
+
+        if (pressed && WaitForCaptionsPanel(doc))
+        {
+            Log.Write("Auto-enable: turned on live captions from the More menu.");
+            return true;
+        }
+        Log.Write("Auto-enable: pressed Captions in the More menu but no captions appeared.");
+        return false;
+    }
+
+    private static AutomationElement? FindCaptionsMenuEntry(AutomationElement doc, bool wait)
+    {
+        string[] names = ["Captions", "Live captions", "Show live captions", "Turn on live captions"];
+        var condition = new OrCondition(
+            new PropertyCondition(AutomationElement.AutomationIdProperty, CaptionsMenuItemId),
+            new OrCondition(names.Select(n => (Condition)new PropertyCondition(AutomationElement.NameProperty, n,
+                PropertyConditionFlags.IgnoreCase)).ToArray()));
+        for (int attempt = 0; ; attempt++)
+        {
+            var found = doc.FindAll(TreeScope.Descendants, condition).Cast<AutomationElement>()
+                .FirstOrDefault(e => e.Current.ControlType == ControlType.CheckBox ||
+                                     e.Current.ControlType == ControlType.MenuItem);
+            if (found != null || !wait || attempt >= 10) return found;
+            Thread.Sleep(200);
+        }
+    }
+
+    private bool TryKeyboardShortcut(AutomationElement doc)
+    {
+        if (_meetingWindow == IntPtr.Zero || Native.GetForegroundWindow() != _meetingWindow)
+        {
+            Log.Write("Auto-enable: Teams isn't the active window, so the Alt+Shift+C shortcut wasn't used.");
+            return false;
+        }
+        Native.SendAltShiftKey('C');
+        if (WaitForCaptionsPanel(doc))
+        {
+            Log.Write("Auto-enable: turned on live captions with Alt+Shift+C.");
+            return true;
+        }
+        Log.Write("Auto-enable: Alt+Shift+C didn't turn on captions.");
+        return false;
+    }
+
+    private void LogCaptionsControls(AutomationElement doc)
+    {
+        try
+        {
+            static string Describe(AutomationElement e) =>
+                $"{e.Current.ControlType.ProgrammaticName.Replace("ControlType.", "")} '{e.Current.Name}' [{e.Current.AutomationId}]";
+
+            var buttons = doc.FindAll(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button))
+                .Cast<AutomationElement>().Where(e => e.Current.AutomationId.Length > 0).Select(Describe);
+            Log.Write("Auto-enable gave up. Toolbar: " + string.Join(", ", buttons));
+
+            var more = FindById(doc, MoreButtonId);
+            if (more == null) return;
+            try
+            {
+                Activate(more);
+                Thread.Sleep(800);
+                var items = doc.FindAll(TreeScope.Descendants, new OrCondition(
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem),
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)))
+                    .Cast<AutomationElement>().Where(e => e.Current.AutomationId.Length > 0).Select(Describe);
+                Log.Write("More menu: " + string.Join(", ", items));
+            }
+            finally
+            {
+                CloseMenu(more);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"Could not list the Teams controls: {ex.Message}");
         }
     }
 
