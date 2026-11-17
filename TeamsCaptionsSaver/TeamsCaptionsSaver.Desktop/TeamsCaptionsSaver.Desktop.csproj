@@ -14,6 +14,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Audio recording: WASAPI capture (NAudio) and the Opus encoder + Ogg writer (Concentus), all MIT. -->
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="Concentus" Version="2.2.2" />
+    <PackageReference Include="Concentus.OggFile" Version="1.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="TeamsCaptionsSaver.Tests" />
     <Resource Include="icon.ico" />
   </ItemGroup>

@@ -22,6 +22,10 @@ or paste into an AI tool for a summary.
 You don't need a bot in the meeting, an admin to enable recording, or a cloud service. Everything
 stays on your PC.
 
+> **This copy** is based on [mufeezahmad/TeamsCaptionsSaver](https://github.com/mufeezahmad/TeamsCaptionsSaver)
+> at commit `e4a5ff5` and adds **meeting audio recording** (Ogg Opus, saved in parts) and **periodic
+> transcript saving while the meeting is on**.
+
 ## Features
 
 - 🎙️ **Real speaker names.** Each line shows who said it, taken directly from Teams.
@@ -32,9 +36,10 @@ stays on your PC.
 - ⭐ **Bookmarks and highlighter.** Star important lines (click ☆ or Ctrl+B) and highlight the exact words that matter. Saved transcripts start with a Highlights list.
 - 🤖 **Hands-free.** Detects when you join a meeting, can switch Teams captions on for you, and saves when the meeting ends.
 - 📄 **Five export formats:** plain text, Markdown, JSON, CSV (opens in Excel) and WebVTT subtitles.
-- 💾 **Crash-safe.** A backup copy is written every 15 seconds, so a crash or reboot doesn't lose the meeting.
+- 💾 **Crash-safe.** A backup copy is written every 15 seconds, and the transcript files themselves are re-saved every few minutes during the meeting, so a crash or reboot doesn't lose the meeting.
+- 🎧 **Audio recording.** Records your microphone and what Teams plays (speaker loopback) as small Ogg Opus files next to the transcript: your voice on the left channel, everyone else on the right. A new file starts every 10 minutes, and the file being written stays playable even after a crash.
 - ✏️ **Rename speakers.** Right-click to fix a name (for example a meeting-room account). The new name is remembered for future meetings.
-- 🔒 **Private.** No network access, no audio recording, no admin rights.
+- 🔒 **Private.** No network access, no admin rights. Audio is recorded only when that setting is on.
 
 ## How it works
 
@@ -99,6 +104,15 @@ Speakers: Alex Johnson, Sam Lee
 | **Auto-save when the meeting ends** | Saves as soon as you leave the meeting |
 | **Turn on Teams live captions automatically** | Switches on "Show live captions" when a meeting starts |
 | **Auto-scroll** | Keeps the newest caption in view |
+| **During the meeting, save the transcript** | Re-saves the transcript files every 1–10 minutes while the meeting is on (default 2), overwriting the same files |
+| **Record meeting audio** | Records the meeting next to the transcript as `<file name>_audio_001.ogg`, `_002.ogg`, … |
+| **Audio quality** | Stereo (me left, others right) at 48 or 64 kbps, or everyone mixed in mono at 16 or 24 kbps. Opus merges the two sides of a stereo file below ~44 kbps, so stereo starts at 48 kbps |
+| **New file every** | Length of each audio part (5–60 minutes, default 10) |
+| **Me (microphone) / Others (speaker output)** | Devices to record. The defaults follow Windows' default and default communications devices, and recording switches over when a headset is plugged in mid-meeting |
+
+Audio sizes per hour: about 21 MB (stereo 48 kbps), 11 MB (mono 24 kbps), 7 MB (mono 16 kbps).
+Ogg Opus plays in VLC and the Windows Media Player app, and ffmpeg and Whisper read it directly. The
+microphone is recorded even while you're muted in Teams; pause capture if you need it off.
 
 ## Build from source
 
@@ -161,20 +175,29 @@ TeamsCaptionsSaver.Desktop/
 │   ├── CaptionParser.cs          Turns a UI snapshot into (speaker, text) pairs
 │   ├── UiNode.cs                 Snapshot of one UI Automation element
 │   └── Native.cs                 Win32 window enumeration
+├── Audio/
+│   ├── MeetingAudioRecorder.cs   Recorder thread: devices, wall-clock pacing, file parts
+│   ├── CaptureSource.cs          One WASAPI microphone or loopback capture, converted to 48 kHz mono
+│   ├── AudioMixer.cs             Keeps sources in sync (silence fill, clock drift) and mixes them
+│   ├── OpusChunkWriter.cs        Ogg Opus encoder, a new file every N minutes
+│   └── AudioDevices.cs           Device choices for the settings
 ├── Transcript/
 │   ├── TranscriptSession.cs      Merges each scan into the transcript, without duplicates
 │   └── TranscriptExporter.cs     TXT / MD / JSON / CSV / VTT
 ├── Models/                       Caption entry and settings
 └── MainWindow.xaml(.cs)          UI, auto-save, backups and settings
-TeamsCaptionsSaver.Tests/         Unit tests for parsing, merging and exports
+TeamsCaptionsSaver.Tests/         Unit tests for parsing, merging, exports and audio
 ```
 
 ## Privacy
 
-Live captions can contain sensitive conversation. Transcripts are stored only on your PC, in the folder
-you choose. The app never sends anything over the network. Follow your organisation's policies, and
-tell the other participants when you're saving a meeting transcript.
+Live captions and audio can contain sensitive conversation. Transcripts and recordings are stored only
+on your PC, in the folder you choose (if that folder syncs to OneDrive, so do they). The app never sends
+anything over the network. Follow your organisation's policies and the law where you are, and tell the
+other participants when you're saving a meeting transcript or recording.
 
 ## License
 
 [MIT](LICENSE) © 2026 Mufeez Ahmad
+
+Audio uses [NAudio](https://github.com/naudio/NAudio) and [Concentus](https://github.com/lostromb/concentus) (both MIT).

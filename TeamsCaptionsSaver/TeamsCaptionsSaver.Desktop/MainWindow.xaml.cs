@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using TeamsCaptionsSaver.Desktop.Audio;
 using TeamsCaptionsSaver.Desktop.Capture;
 using TeamsCaptionsSaver.Desktop.Models;
 using TeamsCaptionsSaver.Desktop.Transcript;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly TeamsCaptionReader _reader = new();
     private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly DispatcherTimer _tickTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly TranscriptFilter _filter = new();
 
     private TranscriptSession _session;
@@ -33,6 +35,20 @@ public partial class MainWindow : Window
     private bool _meetingActive;
     private int _notInMeetingCount;
     private bool _demoMode;
+    private bool _loadingSettings;
+    private MeetingAudioRecorder? _recorder;
+    private AudioRecorderStatus? _lastAudioStatus; // shown after a recording ends
+    private DateTime _lastPeriodicSave;
+
+    private static readonly int[] PeriodicSaveChoices = [0, 1, 2, 5, 10];
+    private static readonly int[] AudioPartChoices = [5, 10, 15, 30, 60];
+    private static readonly (int Channels, int Kbps, string Label)[] AudioQualityChoices =
+    [
+        (2, 48, "Stereo: me left, others right · 48 kbps (~21 MB/h)"),
+        (2, 64, "Stereo: me left, others right · 64 kbps (~29 MB/h)"),
+        (1, 24, "Mono, everyone mixed · 24 kbps (~11 MB/h)"),
+        (1, 16, "Mono, everyone mixed · 16 kbps (~7 MB/h)"),
+    ];
 
     public MainWindow()
     {
@@ -57,6 +73,11 @@ public partial class MainWindow : Window
 
         _backupTimer.Tick += (_, _) => WriteBackup();
         _backupTimer.Start();
+        _tickTimer.Tick += (_, _) => OnTick();
+        _tickTimer.Start();
+
+        // Windows logging off or shutting down doesn't close the window the normal way.
+        Application.Current.SessionEnding += (_, _) => SaveEverythingNow();
     }
 
     private TranscriptSession NewSession()
@@ -134,16 +155,23 @@ public partial class MainWindow : Window
     private void OnMeetingStarted(string title)
     {
         _meetingActive = true;
-        // A previous meeting's transcript stays on screen until the next meeting starts.
-        if (_sessionEnded && _session.Entries.Count > 0)
+        // A previous meeting's transcript stays on screen until the next meeting starts. An empty
+        // session is replaced too, so the start time (file names, audio, subtitle times) is the meeting's.
+        if (_sessionEnded || _session.Entries.Count == 0)
             _session = NewSession();
         _sessionEnded = false;
         _session.Title = title.Length > 0 ? title : _session.Title;
+
+        // Fix the file name now: periodic saves then overwrite the same files, and the audio matches it.
+        _session.FileBaseName = TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session);
+        _lastPeriodicSave = DateTime.Now;
+        StartAudio();
     }
 
     private void OnMeetingEnded()
     {
         _meetingActive = false;
+        StopAudio();
         _sessionEnded = true;
         _session.EndedAt = DateTime.Now;
         WriteBackup();
@@ -193,7 +221,8 @@ public partial class MainWindow : Window
     // --- Saving -------------------------------------------------------------------------------
 
     /// <param name="useFilter">Save only the turns the filters show (manual saves), or everything (auto-save).</param>
-    private List<string>? SaveAll(bool useFilter)
+    /// <param name="quiet">Log failures instead of showing a message box (background saves).</param>
+    private List<string>? SaveAll(bool useFilter, bool quiet = false)
     {
         try
         {
@@ -208,8 +237,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Log.Write($"Save failed: {ex.Message}");
-            MessageBox.Show(this, $"Couldn't save the transcript:\n{ex.Message}", Title,
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            if (!quiet)
+                MessageBox.Show(this, $"Couldn't save the transcript:\n{ex.Message}", Title,
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             return null;
         }
     }
@@ -249,7 +279,7 @@ public partial class MainWindow : Window
         {
             Filter = TranscriptExporter.FileDialogFilter,
             InitialDirectory = _settings.OutputFolder,
-            FileName = TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session) + (filtered ? "_filtered" : ""),
+            FileName = TranscriptExporter.BaseNameFor(_session, _settings.FilenamePattern) + (filtered ? "_filtered" : ""),
         };
         if (dialog.ShowDialog(this) != true) return;
         try
@@ -283,12 +313,107 @@ public partial class MainWindow : Window
         return false;
     }
 
+    // --- Periodic saving and audio -------------------------------------------------------------
+
+    private void OnTick()
+    {
+        UpdateAudioStatus();
+
+        int minutes = _settings.PeriodicSaveMinutes;
+        if (!_meetingActive || minutes <= 0 || _demoMode) return;
+        if (DateTime.Now - _lastPeriodicSave < TimeSpan.FromMinutes(minutes)) return;
+        _lastPeriodicSave = DateTime.Now;
+        // Overwrites the same files each time (the session's file name is fixed at meeting start).
+        if (_session.HasUnsavedChanges && _session.Entries.Count > 0)
+            SaveAll(useFilter: false, quiet: true);
+    }
+
+    private void StartAudio()
+    {
+        StopAudio();
+        _lastAudioStatus = null;
+        if (!_settings.RecordAudio || _demoMode)
+        {
+            UpdateAudioStatus();
+            return;
+        }
+        try
+        {
+            int channels = _settings.AudioChannels == 1 ? 1 : 2;
+            _recorder = new MeetingAudioRecorder(new AudioRecorderOptions(
+                _settings.OutputFolder,
+                _session.FileBaseName ?? TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session),
+                _session.Title,
+                _settings.MicrophoneDevice,
+                _settings.OutputDevice,
+                channels,
+                _settings.AudioBitrateKbps,
+                TimeSpan.FromMinutes(Math.Clamp(_settings.AudioPartMinutes, 1, 240))))
+            {
+                Paused = _paused,
+            };
+            _recorder.Start();
+        }
+        catch (Exception ex)
+        {
+            _recorder = null;
+            Log.Write($"Could not start audio recording: {ex.Message}");
+        }
+        UpdateAudioStatus();
+    }
+
+    /// <summary>Stops recording and finishes the current audio file (waits up to a few seconds).</summary>
+    private void StopAudio()
+    {
+        if (_recorder == null) return;
+        var recorder = _recorder;
+        _recorder = null;
+        recorder.Stop();
+        _lastAudioStatus = recorder.Status;
+        UpdateAudioStatus();
+    }
+
+    private void UpdateAudioStatus()
+    {
+        var status = _recorder?.Status ?? _lastAudioStatus;
+        if (status == null)
+        {
+            AudioStatus.Visibility = Visibility.Collapsed;
+            return;
+        }
+        AudioStatus.Visibility = Visibility.Visible;
+        if (status.Error != null)
+        {
+            AudioStatus.Text = $"Audio recording stopped: {status.Error}";
+            return;
+        }
+        var sources = new List<string>();
+        if (status.Microphones > 0) sources.Add(status.Microphones == 1 ? "microphone" : $"{status.Microphones} microphones");
+        if (status.Outputs > 0) sources.Add(status.Outputs == 1 ? "speaker output" : $"{status.Outputs} speaker outputs");
+        var what = sources.Count > 0 ? string.Join(" + ", sources) : "no audio devices found yet";
+        var size = $"{status.Bytes / 1024.0 / 1024.0:0.0} MB";
+        var length = $"{(int)status.Recorded.TotalHours}:{status.Recorded:mm\\:ss}";
+        AudioStatus.Text = status.Running
+            ? $"● {(_paused ? "Recording silence (paused)" : "Recording audio")} · {length} · part {Math.Max(1, status.Part)} · {size} · {what}"
+            : $"Audio saved · {length} · {status.Part} part(s) · {size}";
+    }
+
+    /// <summary>Called when Windows logs off or shuts down: finish the audio file and save the transcript.</summary>
+    private void SaveEverythingNow()
+    {
+        StopAudio();
+        WriteBackup();
+        if (!_demoMode && _session.HasUnsavedChanges && _session.Entries.Count > 0)
+            SaveAll(useFilter: false, quiet: true);
+    }
+
     // --- Other actions ------------------------------------------------------------------------
 
     private void OnPauseClick(object sender, RoutedEventArgs e)
     {
         _paused = !_paused;
         PauseButton.Content = _paused ? "Resume capture" : "Pause capture";
+        if (_recorder != null) _recorder.Paused = _paused;
         Log.Write(_paused ? "Capture paused." : "Capture resumed.");
     }
 
@@ -628,6 +753,8 @@ public partial class MainWindow : Window
 
     private void LoadSettingsIntoUi()
     {
+        // Setting a combo box's selection raises SelectionChanged, which would save half-loaded settings.
+        _loadingSettings = true;
         FolderBox.Text = _settings.OutputFolder;
         PatternBox.Text = _settings.FilenamePattern;
         AutoSaveBox.IsChecked = _settings.AutoSaveOnMeetingEnd;
@@ -646,10 +773,53 @@ public partial class MainWindow : Window
             box.Click += OnSettingChanged;
             FormatsPanel.Children.Add(box);
         }
+
+        PeriodicSaveBox.ItemsSource = PeriodicSaveChoices.Select(m => m switch
+        {
+            0 => "Only at the end",
+            1 => "Every minute",
+            _ => $"Every {m} minutes",
+        }).ToList();
+        PeriodicSaveBox.SelectedIndex = NearestIndex(PeriodicSaveChoices, _settings.PeriodicSaveMinutes);
+
+        RecordAudioBox.IsChecked = _settings.RecordAudio;
+        AudioQualityBox.ItemsSource = AudioQualityChoices.Select(q => q.Label).ToList();
+        int quality = Array.FindIndex(AudioQualityChoices,
+            q => q.Channels == _settings.AudioChannels && q.Kbps == _settings.AudioBitrateKbps);
+        AudioQualityBox.SelectedIndex = quality >= 0 ? quality : 0;
+        AudioPartBox.ItemsSource = AudioPartChoices.Select(m => $"{m} min").ToList();
+        AudioPartBox.SelectedIndex = NearestIndex(AudioPartChoices, _settings.AudioPartMinutes);
+        LoadDeviceLists();
+
+        _loadingSettings = false;
     }
+
+    private static int NearestIndex(int[] choices, int value) =>
+        Array.IndexOf(choices, choices.MinBy(c => Math.Abs(c - value)));
+
+    /// <summary>Fills the device lists, keeping the saved choice even if that device is unplugged right now.</summary>
+    private void LoadDeviceLists()
+    {
+        static void Fill(ComboBox box, List<AudioDeviceOption> options, string selectedId)
+        {
+            if (options.All(o => o.Id != selectedId))
+                options.Add(new AudioDeviceOption(selectedId, "(not connected) saved device"));
+            box.ItemsSource = options;
+            box.SelectedItem = options.First(o => o.Id == selectedId);
+        }
+
+        bool wasLoading = _loadingSettings;
+        _loadingSettings = true;
+        Fill(MicrophoneBox, AudioDevices.MicrophoneOptions(), _settings.MicrophoneDevice);
+        Fill(OutputBox, AudioDevices.OutputOptions(), _settings.OutputDevice);
+        _loadingSettings = wasLoading;
+    }
+
+    private void OnDevicesDropDownOpened(object? sender, EventArgs e) => LoadDeviceLists();
 
     private void OnSettingChanged(object sender, RoutedEventArgs e)
     {
+        if (_loadingSettings) return;
         if (!string.IsNullOrWhiteSpace(FolderBox.Text)) _settings.OutputFolder = FolderBox.Text.Trim();
         if (!string.IsNullOrWhiteSpace(PatternBox.Text)) _settings.FilenamePattern = PatternBox.Text.Trim();
         _settings.AutoSaveOnMeetingEnd = AutoSaveBox.IsChecked == true;
@@ -658,6 +828,14 @@ public partial class MainWindow : Window
         _settings.AutoSaveFormats = FormatsPanel.Children.OfType<CheckBox>()
             .Where(b => b.IsChecked == true).Select(b => (string)b.Tag).ToList();
         _reader.AutoEnableCaptions = _settings.AutoEnableCaptions;
+
+        if (PeriodicSaveBox.SelectedIndex >= 0) _settings.PeriodicSaveMinutes = PeriodicSaveChoices[PeriodicSaveBox.SelectedIndex];
+        _settings.RecordAudio = RecordAudioBox.IsChecked == true;
+        if (AudioQualityBox.SelectedIndex >= 0)
+            (_settings.AudioChannels, _settings.AudioBitrateKbps, _) = AudioQualityChoices[AudioQualityBox.SelectedIndex];
+        if (AudioPartBox.SelectedIndex >= 0) _settings.AudioPartMinutes = AudioPartChoices[AudioPartBox.SelectedIndex];
+        if (MicrophoneBox.SelectedItem is AudioDeviceOption mic) _settings.MicrophoneDevice = mic.Id;
+        if (OutputBox.SelectedItem is AudioDeviceOption output) _settings.OutputDevice = output.Id;
         _settings.Save();
     }
 
@@ -690,8 +868,10 @@ public partial class MainWindow : Window
             e.Cancel = true;
             return;
         }
+        StopAudio();
         WriteBackup();
         _backupTimer.Stop();
+        _tickTimer.Stop();
         _reader.Dispose();
     }
 }

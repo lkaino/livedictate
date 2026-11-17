@@ -20,6 +20,12 @@ public sealed class TranscriptSession
     public string Title { get; set; } = "Teams Meeting";
     public DateTime StartedAt { get; } = DateTime.Now;
     public DateTime? EndedAt { get; set; }
+
+    /// <summary>
+    /// File name (without extension) fixed when the meeting starts, so periodic saves keep overwriting
+    /// the same files and the audio parts share the transcript's name. Null = built from the pattern.
+    /// </summary>
+    public string? FileBaseName { get; set; }
     /// <summary>Every caption block Teams showed, in order. Exports like WebVTT use these directly.</summary>
     public ObservableCollection<CaptionEntry> Entries { get; } = [];
 

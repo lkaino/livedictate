@@ -24,6 +24,8 @@
                 <StackPanel>
                     <TextBlock x:Name="StatusText" FontWeight="SemiBold" FontSize="14" Text="Starting…" />
                     <TextBlock x:Name="StatusDetail" Foreground="#555" TextWrapping="Wrap" />
+                    <TextBlock x:Name="AudioStatus" Foreground="#B91C1C" TextWrapping="Wrap" Margin="0,2,0,0"
+                               Visibility="Collapsed" />
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -185,6 +187,9 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="Save to:" VerticalAlignment="Center" Margin="0,0,8,0" />
@@ -208,6 +213,32 @@
                     <CheckBox x:Name="AutoSaveBox" Content="Auto-save when the meeting ends" Click="OnSettingChanged" />
                     <CheckBox x:Name="AutoEnableBox" Content="Turn on Teams live captions automatically" Click="OnSettingChanged" />
                     <CheckBox x:Name="AutoScrollBox" Content="Auto-scroll" Click="OnSettingChanged" />
+                </WrapPanel>
+
+                <WrapPanel Grid.Row="4" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                    <TextBlock Text="During the meeting, save the transcript:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox x:Name="PeriodicSaveBox" Width="150" SelectionChanged="OnSettingChanged"
+                              ToolTip="Overwrites the same transcript files each time, so little is lost if the PC or app crashes." />
+                </WrapPanel>
+
+                <WrapPanel Grid.Row="5" Grid.ColumnSpan="3" Margin="0,10,0,0">
+                    <CheckBox x:Name="RecordAudioBox" Content="Record meeting audio" VerticalAlignment="Center"
+                              Click="OnSettingChanged" Margin="0,0,12,0"
+                              ToolTip="Saves Ogg Opus files next to the transcript. Changes apply from the next meeting." />
+                    <ComboBox x:Name="AudioQualityBox" Width="300" SelectionChanged="OnSettingChanged" />
+                    <TextBlock Text="New file every" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <ComboBox x:Name="AudioPartBox" Width="90" SelectionChanged="OnSettingChanged" />
+                </WrapPanel>
+
+                <WrapPanel Grid.Row="6" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                    <TextBlock Text="Me (microphone):" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox x:Name="MicrophoneBox" Width="260" DropDownOpened="OnDevicesDropDownOpened"
+                              SelectionChanged="OnSettingChanged"
+                              ToolTip="Recorded even while you're muted in Teams." />
+                    <TextBlock Text="Others (speaker output):" VerticalAlignment="Center" Margin="12,0,6,0" />
+                    <ComboBox x:Name="OutputBox" Width="260" DropDownOpened="OnDevicesDropDownOpened"
+                              SelectionChanged="OnSettingChanged"
+                              ToolTip="Records what plays through this device - pick the one Teams uses." />
                 </WrapPanel>
             </Grid>
         </Expander>

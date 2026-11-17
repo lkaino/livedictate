@@ -19,6 +19,26 @@ public sealed class AppSettings
 
     public bool AutoScroll { get; set; } = true;
 
+    /// <summary>While a meeting is on, save the transcript every this many minutes (0 = only at the end).</summary>
+    public int PeriodicSaveMinutes { get; set; } = 2;
+
+    /// <summary>Record the meeting's audio (microphone + speaker output) next to the transcript.</summary>
+    public bool RecordAudio { get; set; } = true;
+
+    /// <summary>An <c>Audio.AudioDevices</c> choice: a special value or a device ID.</summary>
+    public string MicrophoneDevice { get; set; } = ""; // AudioDevices.Auto
+
+    /// <summary>An <c>Audio.AudioDevices</c> choice for the speaker output (what Teams plays).</summary>
+    public string OutputDevice { get; set; } = ""; // AudioDevices.Auto
+
+    /// <summary>2 = microphone left, other people right; 1 = mixed together.</summary>
+    public int AudioChannels { get; set; } = 2;
+
+    public int AudioBitrateKbps { get; set; } = 48;
+
+    /// <summary>A new audio file is started every this many minutes.</summary>
+    public int AudioPartMinutes { get; set; } = 10;
+
     public Dictionary<string, string> SpeakerAliases { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public static string AppDataFolder { get; } =

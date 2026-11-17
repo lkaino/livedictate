@@ -41,6 +41,10 @@ public static class TranscriptExporter
         return name.Length == 0 ? "Teams Transcript" : name.Length > 150 ? name[..150] : name;
     }
 
+    /// <summary>The session's fixed file name if it has one, otherwise one built from the pattern.</summary>
+    public static string BaseNameFor(TranscriptSession session, string pattern) =>
+        session.FileBaseName ?? BuildFileName(pattern, session);
+
     /// <summary>True when <paramref name="turns"/> leaves out some of the session's turns.</summary>
     public static bool IsFiltered(TranscriptSession s, IReadOnlyList<SpeakerTurn>? turns) =>
         turns != null && turns.Count != s.Turns.Count;
@@ -53,7 +57,7 @@ public static class TranscriptExporter
         IReadOnlyList<SpeakerTurn>? turns = null)
     {
         Directory.CreateDirectory(folder);
-        var baseName = BuildFileName(pattern, session) + (IsFiltered(session, turns) ? "_filtered" : "");
+        var baseName = BaseNameFor(session, pattern) + (IsFiltered(session, turns) ? "_filtered" : "");
         var paths = new List<string>();
         foreach (var ext in formats.Distinct(StringComparer.OrdinalIgnoreCase))
         {
