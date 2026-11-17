@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private MeetingAudioRecorder? _recorder;
     private AudioRecorderStatus? _lastAudioStatus; // shown after a recording ends
     private DateTime _lastPeriodicSave;
+    private int _meetingKey; // the reader's id of the meeting this session belongs to
 
     private static readonly int[] PeriodicSaveChoices = [0, 1, 2, 5, 10];
     private static readonly int[] AudioPartChoices = [5, 10, 15, 30, 60];
@@ -131,7 +132,14 @@ public partial class MainWindow : Window
         if (snap.InMeeting)
         {
             _notInMeetingCount = 0;
-            if (!_meetingActive) OnMeetingStarted(snap.MeetingTitle);
+            // The reader moved to a different meeting (say this one ended while another waits on hold):
+            // finish this one under its own name before starting the next.
+            if (_meetingActive && snap.MeetingKey != _meetingKey)
+            {
+                Log.Write($"Switched to another meeting: '{snap.MeetingTitle}'.");
+                OnMeetingEnded();
+            }
+            if (!_meetingActive) OnMeetingStarted(snap.MeetingTitle, snap.MeetingKey);
             if (snap.MeetingTitle.Length > 0) _session.Title = snap.MeetingTitle;
         }
         else if (_meetingActive && ++_notInMeetingCount >= MeetingEndDebounce)
@@ -152,9 +160,10 @@ public partial class MainWindow : Window
         UpdateStatus(snap);
     }
 
-    private void OnMeetingStarted(string title)
+    private void OnMeetingStarted(string title, int meetingKey)
     {
         _meetingActive = true;
+        _meetingKey = meetingKey;
         // A previous meeting's transcript stays on screen until the next meeting starts. An empty
         // session is replaced too, so the start time (file names, audio, subtitle times) is the meeting's.
         if (_sessionEnded || _session.Entries.Count == 0)

@@ -11,7 +11,8 @@ public sealed record CaptureSnapshot(
     bool InMeeting,
     bool CaptionsVisible,
     string MeetingTitle,
-    IReadOnlyList<ParsedCaption> Captions);
+    IReadOnlyList<ParsedCaption> Captions,
+    int MeetingKey = 0);
 
 /// <summary>
 /// Reads live captions from the Microsoft Teams desktop client (new Teams, ms-teams.exe) through
@@ -48,6 +49,10 @@ public sealed class TeamsCaptionReader : IDisposable
     private AutomationElement? _meetingDocument;
     private IntPtr _meetingWindow;
     private string _meetingTitle = "";
+
+    /// <summary>Changes whenever we start following a different meeting (e.g. one was put on hold).</summary>
+    private int _meetingKey;
+    private readonly HashSet<string> _reportedOnHold = [];
 
     private bool _wasInMeeting;
     private DateTime _meetingDetectedAt;
@@ -166,7 +171,7 @@ public sealed class TeamsCaptionReader : IDisposable
             MaybeAutoEnableCaptions(now);
 
         SnapshotTaken?.Invoke(new CaptureSnapshot(true, inMeeting, _captionsContainer != null,
-            inMeeting ? _meetingTitle : "", captions));
+            inMeeting ? _meetingTitle : "", captions, _meetingKey));
     }
 
     private void UpdateMeetingState(bool inMeeting, DateTime now)
@@ -225,9 +230,14 @@ public sealed class TeamsCaptionReader : IDisposable
         return results;
     }
 
-    /// <summary>Scans every Teams document for the Leave button and the live-captions region.</summary>
+    /// <summary>
+    /// Scans every Teams document for meetings (Leave button, live-captions region) and picks the one
+    /// to follow. Meetings on hold are ignored, so a meeting waiting in the background neither keeps
+    /// a finished meeting "running" nor lends it its name.
+    /// </summary>
     private void FullScan()
     {
+        var scanned = new List<(IntPtr Window, AutomationElement Root, string Title, UiNode Tree, SourceNode? Hangup)>();
         foreach (var (hostWindow, root, windowTitle) in _documents)
         {
             UiNode tree;
@@ -240,24 +250,60 @@ public sealed class TeamsCaptionReader : IDisposable
                 _lastWindowRefresh = DateTime.MinValue;
                 continue;
             }
+            scanned.Add((Native.GetAncestor(hostWindow, Native.GA_ROOT), root, windowTitle, tree, FindHangup(tree)));
+        }
 
-            var hangup = FindHangup(tree);
-            var container = FindCaptionsContainer(tree, inMeeting: hangup != null || _hangupButton != null);
+        bool anyHangup = _hangupButton != null || scanned.Any(s => s.Hangup != null);
+        var candidates = new List<MeetingCandidate>();
+        foreach (var (window, root, windowTitle, tree, hangup) in scanned)
+        {
+            var container = FindCaptionsContainer(tree, inMeeting: hangup != null || anyHangup);
+            if (hangup == null && container == null) continue;
+            var candidate = new MeetingCandidate(window, CleanTitle(windowTitle), hangup != null, container != null,
+                MeetingSelector.IsOnHold(tree))
+            {
+                Document = root,
+                Hangup = hangup?.Source,
+                Captions = container?.Source,
+            };
+            candidates.Add(candidate);
+            if (candidate.OnHold && _reportedOnHold.Add(candidate.Title))
+                Log.Write($"Meeting on hold, not following it: '{candidate.Title}'.");
+        }
+        foreach (var title in _reportedOnHold.Where(t => !candidates.Any(c => c.OnHold && c.Title == t)).ToList())
+            _reportedOnHold.Remove(title);
 
-            if (hangup != null)
+        var chosen = MeetingSelector.Choose(candidates, _meetingWindow, Native.GetForegroundWindow());
+        if (chosen == null)
+        {
+            // The meeting we follow was put on hold: stop following it. Otherwise keep what we have;
+            // Tick drops elements that disappear (meeting ended, captions turned off).
+            if (candidates.Any(c => c.OnHold && c.Window == _meetingWindow))
             {
-                _hangupButton = (AutomationElement?)hangup.Source;
-                _meetingDocument = root;
-                _meetingWindow = Native.GetAncestor(hostWindow, Native.GA_ROOT);
-                _meetingTitle = CleanTitle(windowTitle);
+                Log.Write($"'{_meetingTitle}' was put on hold.");
+                ResetMeetingElements();
             }
-            if (container != null && _captionsContainer == null)
-            {
-                _captionsContainer = (AutomationElement?)container.Source;
-                _meetingDocument ??= root;
-                if (_meetingTitle.Length == 0) _meetingTitle = CleanTitle(windowTitle);
-                Log.Write($"Captions region found (name='{container.Name}', id='{container.AutomationId}').");
-            }
+            return;
+        }
+
+        bool otherWindow = chosen.Window != _meetingWindow;
+        if (_meetingTitle.Length > 0 && chosen.Title != _meetingTitle)
+        {
+            _meetingKey++;
+            _autoEnableAttempts = 0;
+            _meetingDetectedAt = DateTime.UtcNow;
+            Log.Write($"Now following meeting '{chosen.Title}' (was '{_meetingTitle}').");
+        }
+
+        _meetingDocument = (AutomationElement?)chosen.Document;
+        _meetingWindow = chosen.Window;
+        _meetingTitle = chosen.Title;
+        _hangupButton = (AutomationElement?)chosen.Hangup;
+        // Captions belong to one meeting window: never keep another window's captions.
+        if (_captionsContainer == null || otherWindow)
+        {
+            _captionsContainer = (AutomationElement?)chosen.Captions;
+            if (_captionsContainer != null) Log.Write($"Captions region found in '{chosen.Title}'.");
         }
     }
 
