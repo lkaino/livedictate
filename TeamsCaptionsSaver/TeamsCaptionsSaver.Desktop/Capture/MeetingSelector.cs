@@ -16,21 +16,39 @@ internal sealed record MeetingCandidate(IntPtr Window, string Title, bool HasHan
 /// </summary>
 internal static class MeetingSelector
 {
+    /// <summary>Button names of Teams' on-hold screen (English and Finnish Teams).</summary>
+    private static readonly string[] ResumeNames = ["Resume", "Jatka"];
+
     /// <summary>
     /// The meeting to follow, or null when there is none or every meeting is on hold.
-    /// The meeting already being followed wins while it's still active, so the choice doesn't flip
-    /// between windows; then a meeting with captions showing, then the one in the foreground.
+    /// <list type="number">
+    /// <item>Meetings on hold are skipped. So are meetings we left for another one
+    /// (<paramref name="superseded"/>), unless their window is in front - that's where you click Resume.</item>
+    /// <item>A meeting window that wasn't there at the previous scan (<paramref name="known"/>) wins:
+    /// Teams puts your other calls on hold when you join a meeting, so the newest one is where you are.</item>
+    /// <item>Then the meeting already followed, so the choice doesn't flip between windows.</item>
+    /// <item>Then a meeting with captions showing, then the one in the foreground.</item>
+    /// </list>
     /// </summary>
-    public static MeetingCandidate? Choose(IReadOnlyList<MeetingCandidate> candidates, IntPtr current, IntPtr foreground)
+    public static MeetingCandidate? Choose(IReadOnlyList<MeetingCandidate> candidates, IntPtr current, IntPtr foreground,
+        IReadOnlySet<IntPtr>? known = null, IReadOnlySet<IntPtr>? superseded = null)
     {
-        var active = candidates.Where(c => !c.OnHold && (c.HasHangup || c.HasCaptions)).ToList();
+        var active = candidates.Where(c => !c.OnHold && (c.HasHangup || c.HasCaptions) &&
+            (superseded == null || !superseded.Contains(c.Window) || c.Window == foreground)).ToList();
         if (active.Count == 0) return null;
-        return active.FirstOrDefault(c => current != IntPtr.Zero && c.Window == current && c.HasHangup)
-            ?? active.FirstOrDefault(c => c.HasHangup && c.HasCaptions)
-            ?? active.FirstOrDefault(c => c.HasHangup && foreground != IntPtr.Zero && c.Window == foreground)
-            ?? active.FirstOrDefault(c => c.HasHangup)
-            ?? active[0];
+
+        var joined = known == null ? []
+            : active.Where(c => c.HasHangup && c.Window != current && !known.Contains(c.Window)).ToList();
+        return Best(joined, foreground)
+            ?? active.FirstOrDefault(c => current != IntPtr.Zero && c.Window == current && c.HasHangup)
+            ?? Best(active, foreground);
     }
+
+    private static MeetingCandidate? Best(List<MeetingCandidate> list, IntPtr foreground) =>
+        list.FirstOrDefault(c => c.HasHangup && c.HasCaptions)
+        ?? list.FirstOrDefault(c => c.HasHangup && foreground != IntPtr.Zero && c.Window == foreground)
+        ?? list.FirstOrDefault(c => c.HasHangup)
+        ?? list.FirstOrDefault();
 
     /// <summary>
     /// True when a meeting window shows Teams' on-hold screen, which has a Resume button. Only buttons
@@ -38,7 +56,8 @@ internal static class MeetingSelector
     /// </summary>
     public static bool IsOnHold(UiNode tree) =>
         tree.Descendants().Any(n => n.ControlType == "Button" &&
-            (n.Name.Equals("Resume", StringComparison.OrdinalIgnoreCase) ||
-             n.Name.StartsWith("Resume ", StringComparison.OrdinalIgnoreCase) ||
-             n.AutomationId.Contains("resume", StringComparison.OrdinalIgnoreCase)));
+            (ResumeNames.Any(r => n.Name.Equals(r, StringComparison.OrdinalIgnoreCase) ||
+                                  n.Name.StartsWith(r + " ", StringComparison.OrdinalIgnoreCase)) ||
+             n.AutomationId.Contains("resume", StringComparison.OrdinalIgnoreCase) ||
+             n.AutomationId.Contains("unhold", StringComparison.OrdinalIgnoreCase)));
 }

@@ -32,6 +32,12 @@ public sealed class TeamsCaptionReader : IDisposable
     private static readonly TimeSpan WindowRefreshInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan FullScanInterval = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan IdleFullScanInterval = TimeSpan.FromSeconds(6);
+
+    /// <summary>
+    /// How often to rescan while following a meeting, to notice it being put on hold or another
+    /// meeting being joined (the followed meeting's Leave button and captions stay alive meanwhile).
+    /// </summary>
+    private static readonly TimeSpan MeetingCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AutoEnableDelay = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan AutoEnableRetry = TimeSpan.FromSeconds(20);
     private const int MaxAutoEnableAttempts = 3;
@@ -53,6 +59,12 @@ public sealed class TeamsCaptionReader : IDisposable
     /// <summary>Changes whenever we start following a different meeting (e.g. one was put on hold).</summary>
     private int _meetingKey;
     private readonly HashSet<string> _reportedOnHold = [];
+
+    /// <summary>Windows that showed a Leave button at the previous scan; null before the first scan.</summary>
+    private HashSet<IntPtr>? _knownMeetingWindows;
+
+    /// <summary>Meetings we left because another one was joined: Teams has put them on hold.</summary>
+    private readonly HashSet<IntPtr> _superseded = [];
 
     private bool _wasInMeeting;
     private DateTime _meetingDetectedAt;
@@ -141,9 +153,12 @@ public sealed class TeamsCaptionReader : IDisposable
 
         if (_hangupButton != null && !IsAlive(_hangupButton)) _hangupButton = null;
 
-        // A full scan is only needed while we're still looking for the meeting controls or the captions.
-        var scanInterval = _wasInMeeting ? FullScanInterval : IdleFullScanInterval;
-        if ((_hangupButton == null || _captionsContainer == null) && now - _lastFullScan > scanInterval)
+        // Scan often while looking for the meeting controls or the captions; less often once both are
+        // found, just to notice the meeting going on hold or another meeting being joined.
+        var scanInterval = !_wasInMeeting ? IdleFullScanInterval
+            : _hangupButton == null || _captionsContainer == null ? FullScanInterval
+            : MeetingCheckInterval;
+        if (now - _lastFullScan > scanInterval)
         {
             FullScan();
             _lastFullScan = now;
@@ -273,7 +288,11 @@ public sealed class TeamsCaptionReader : IDisposable
         foreach (var title in _reportedOnHold.Where(t => !candidates.Any(c => c.OnHold && c.Title == t)).ToList())
             _reportedOnHold.Remove(title);
 
-        var chosen = MeetingSelector.Choose(candidates, _meetingWindow, Native.GetForegroundWindow());
+        var meetingWindows = candidates.Where(c => c.HasHangup).Select(c => c.Window).ToHashSet();
+        _superseded.IntersectWith(meetingWindows); // forget meetings that were closed
+        var chosen = MeetingSelector.Choose(candidates, _meetingWindow, Native.GetForegroundWindow(),
+            _knownMeetingWindows, _superseded);
+        _knownMeetingWindows = meetingWindows;
         if (chosen == null)
         {
             // The meeting we follow was put on hold: stop following it. Otherwise keep what we have;
@@ -287,7 +306,12 @@ public sealed class TeamsCaptionReader : IDisposable
         }
 
         bool otherWindow = chosen.Window != _meetingWindow;
-        if (_meetingTitle.Length > 0 && chosen.Title != _meetingTitle)
+        // Moving to another window while the old meeting is still open means you joined another
+        // meeting (or resumed one on hold): the old one is on hold now, so don't go back to it.
+        bool leftLiveMeeting = otherWindow && _meetingWindow != IntPtr.Zero && meetingWindows.Contains(_meetingWindow);
+        if (leftLiveMeeting) _superseded.Add(_meetingWindow);
+        _superseded.Remove(chosen.Window);
+        if (_meetingTitle.Length > 0 && (chosen.Title != _meetingTitle || leftLiveMeeting))
         {
             _meetingKey++;
             _autoEnableAttempts = 0;
@@ -652,7 +676,7 @@ public sealed class TeamsCaptionReader : IDisposable
                 var tree = ToNode(root.GetUpdatedCache(_subtreeRequest));
                 var hangupFound = FindHangup(tree) != null;
                 var container = FindCaptionsContainer(tree, hangupFound);
-                sb.AppendLine($"Leave button found: {hangupFound}; captions region: " +
+                sb.AppendLine($"Leave button found: {hangupFound}; on hold: {MeetingSelector.IsOnHold(tree)}; captions region: " +
                               (container == null ? "not found" : $"'{container.Name}' id='{container.AutomationId}'"));
                 if (container != null)
                     foreach (var c in CaptionParser.Parse(container))

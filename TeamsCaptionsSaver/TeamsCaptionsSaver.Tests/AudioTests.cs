@@ -176,13 +176,13 @@ public class AudioTests
     }
 
     [Fact]
-    public void Writer_splits_audio_into_parts_that_decode_to_the_right_length()
+    public void Writer_names_each_part_after_its_start_time_and_never_overwrites()
     {
         var folder = Path.Combine(Path.GetTempPath(), "tcs-audio-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using (var writer = new OpusChunkWriter(folder, "2026-11-17_14-00_Weekly sync", "Weekly sync", 2, 48,
-                       TimeSpan.FromSeconds(4)))
+            var start = new DateTime(2026, 11, 17, 14, 3, 7);
+            using (var writer = new OpusChunkWriter(folder, "2026-11-17_14-03_Weekly sync", "Weekly sync", 2, 48))
             {
                 var second = new float[Rate * 2];
                 for (int i = 0; i < Rate; i++)
@@ -190,21 +190,26 @@ public class AudioTests
                     second[2 * i] = 0.3f * MathF.Sin(i * 0.05f);
                     second[2 * i + 1] = 0.2f * MathF.Sin(i * 0.03f);
                 }
-                for (int s = 0; s < 10; s++) writer.Write(second, Rate);
-                Assert.Equal(3, writer.Part);
+                writer.StartPart(start);
+                for (int s = 0; s < 4; s++) writer.Write(second, Rate);
+                writer.StartPart(start.AddSeconds(4));
+                for (int s = 0; s < 2; s++) writer.Write(second, Rate);
+                Assert.Equal(2, writer.Part);
+                Assert.Equal([start, start.AddSeconds(4)], writer.Parts.Select(p => p.Start));
             }
 
             var files = Directory.GetFiles(folder).Order().ToList();
             Assert.Equal(
-                ["2026-11-17_14-00_Weekly sync_audio_001.ogg", "2026-11-17_14-00_Weekly sync_audio_002.ogg", "2026-11-17_14-00_Weekly sync_audio_003.ogg"],
+                ["2026-11-17_14-03_Weekly sync_audio_14-03-07.ogg", "2026-11-17_14-03_Weekly sync_audio_14-03-11.ogg"],
                 files.Select(Path.GetFileName));
-            Assert.Equal([4.0, 4.0, 2.0], files.Select(DecodedSeconds));
+            Assert.Equal([4.0, 2.0], files.Select(DecodedSeconds));
 
-            // A second recording with the same name continues the numbering instead of overwriting.
-            using (var again = new OpusChunkWriter(folder, "2026-11-17_14-00_Weekly sync", "Weekly sync", 1, 24, TimeSpan.FromMinutes(1)))
+            // Recording again with the same name (app restarted) adds a number instead of overwriting.
+            using (var again = new OpusChunkWriter(folder, "2026-11-17_14-03_Weekly sync", "Weekly sync", 1, 24))
             {
+                again.StartPart(start);
                 again.Write(new float[Rate], Rate);
-                Assert.EndsWith("_audio_004.ogg", again.CurrentPath);
+                Assert.EndsWith("_audio_14-03-07_2.ogg", again.CurrentPath);
             }
         }
         finally

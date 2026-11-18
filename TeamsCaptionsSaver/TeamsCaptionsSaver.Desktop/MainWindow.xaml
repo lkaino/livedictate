@@ -190,6 +190,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <TextBlock Text="Save to:" VerticalAlignment="Center" Margin="0,0,8,0" />
@@ -204,24 +205,31 @@
                 <TextBlock Grid.Row="1" Grid.Column="2" Text="{}{date} {time} {title}" Foreground="#777"
                            VerticalAlignment="Center" Margin="6,6,0,0" />
 
-                <WrapPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                <TextBlock Grid.Row="2" Text="Subfolders:" VerticalAlignment="Center" Margin="0,6,8,0" />
+                <TextBox x:Name="SubfolderBox" Grid.Row="2" Grid.Column="1" Margin="0,6,0,0" Padding="3"
+                         VerticalContentAlignment="Center" LostFocus="OnSettingChanged"
+                         ToolTip="Folders inside the save folder, separated by /. Empty = save everything directly in the save folder. Variables: {date} {time} {title}" />
+                <TextBlock Grid.Row="2" Grid.Column="2" Text="e.g. {title}/{date}" Foreground="#777"
+                           VerticalAlignment="Center" Margin="6,6,0,0" />
+
+                <WrapPanel Grid.Row="3" Grid.ColumnSpan="3" Margin="0,8,0,0">
                     <TextBlock Text="Formats:" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <WrapPanel x:Name="FormatsPanel" />
                 </WrapPanel>
 
-                <WrapPanel Grid.Row="3" Grid.ColumnSpan="3" Margin="0,4,0,0">
+                <WrapPanel Grid.Row="4" Grid.ColumnSpan="3" Margin="0,4,0,0">
                     <CheckBox x:Name="AutoSaveBox" Content="Auto-save when the meeting ends" Click="OnSettingChanged" />
                     <CheckBox x:Name="AutoEnableBox" Content="Turn on Teams live captions automatically" Click="OnSettingChanged" />
                     <CheckBox x:Name="AutoScrollBox" Content="Auto-scroll" Click="OnSettingChanged" />
                 </WrapPanel>
 
-                <WrapPanel Grid.Row="4" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                <WrapPanel Grid.Row="5" Grid.ColumnSpan="3" Margin="0,8,0,0">
                     <TextBlock Text="During the meeting, save the transcript:" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <ComboBox x:Name="PeriodicSaveBox" Width="150" SelectionChanged="OnSettingChanged"
                               ToolTip="Overwrites the same transcript files each time, so little is lost if the PC or app crashes." />
                 </WrapPanel>
 
-                <WrapPanel Grid.Row="5" Grid.ColumnSpan="3" Margin="0,10,0,0">
+                <WrapPanel Grid.Row="6" Grid.ColumnSpan="3" Margin="0,10,0,0">
                     <CheckBox x:Name="RecordAudioBox" Content="Record meeting audio" VerticalAlignment="Center"
                               Click="OnSettingChanged" Margin="0,0,12,0"
                               ToolTip="Saves Ogg Opus files next to the transcript. Changes apply from the next meeting." />
@@ -230,7 +238,7 @@
                     <ComboBox x:Name="AudioPartBox" Width="90" SelectionChanged="OnSettingChanged" />
                 </WrapPanel>
 
-                <WrapPanel Grid.Row="6" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                <WrapPanel Grid.Row="7" Grid.ColumnSpan="3" Margin="0,6,0,0">
                     <TextBlock Text="Me (microphone):" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <ComboBox x:Name="MicrophoneBox" Width="260" DropDownOpened="OnDevicesDropDownOpened"
                               SelectionChanged="OnSettingChanged"

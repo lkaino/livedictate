@@ -5,11 +5,15 @@ using Concentus.Oggfile;
 
 namespace TeamsCaptionsSaver.Desktop.Audio;
 
+/// <summary>One audio file and the local time its first sample was recorded.</summary>
+public sealed record AudioPart(string Path, DateTime Start);
+
 /// <summary>
-/// Writes 48 kHz audio as Ogg Opus files, starting a new file ("part") every <c>chunkLength</c>, so a
-/// long meeting is saved piece by piece. Ogg pages reach the disk as they fill (every few seconds) and
-/// <see cref="Flush"/> pushes them out, so even the part being written survives a crash, playable up to
-/// the last page.
+/// Writes 48 kHz audio as Ogg Opus files ("parts"), each named after the time it starts
+/// (<c>..._audio_14-10-00.ogg</c>), so a transcript line at 14:13:25 is 3:25 into that file.
+/// The caller decides when a part starts (<see cref="StartPart"/>). Ogg pages reach the disk as they
+/// fill (every few seconds) and <see cref="Flush"/> pushes them out, so even the part being written
+/// survives a crash, playable up to the last page.
 /// </summary>
 public sealed class OpusChunkWriter : IDisposable
 {
@@ -31,17 +35,14 @@ public sealed class OpusChunkWriter : IDisposable
     private readonly string _channelNote;
     private readonly int _channels;
     private readonly int _bitrate;
-    private readonly long _framesPerPart;
-    private readonly DateTime _startedAt;
-    private readonly List<string> _files = [];
 
     private FileStream? _stream;
     private OpusOggWriteStream? _ogg;
-    private long _framesInPart;
     private long _finishedBytes;
+    private AudioPart[] _parts = [];
 
     public OpusChunkWriter(string folder, string baseName, string title, int channels, int bitrateKbps,
-        TimeSpan partLength, string channelNote = "")
+        string channelNote = "")
     {
         if (channels is not (1 or 2)) throw new ArgumentOutOfRangeException(nameof(channels));
         _folder = folder;
@@ -51,50 +52,39 @@ public sealed class OpusChunkWriter : IDisposable
         _channelNote = channelNote;
         if (channels == 2) bitrateKbps = Math.Max(bitrateKbps, MinStereoBitrateKbps);
         _bitrate = Math.Clamp(bitrateKbps, 6, 256) * 1000;
-        _framesPerPart = Math.Max(1, (long)(partLength.TotalSeconds * AudioMixer.SampleRate));
-        _startedAt = DateTime.Now;
     }
 
-    /// <summary>Number of the part being written (1, 2, ...), or 0 before the first write.</summary>
-    public int Part { get; private set; }
+    /// <summary>Number of the part being written (1, 2, ...), or 0 before the first one.</summary>
+    public int Part => _parts.Length;
 
-    public string? CurrentPath { get; private set; }
+    public string? CurrentPath => _parts.LastOrDefault()?.Path;
 
-    public IReadOnlyList<string> Files => _files;
+    /// <summary>Every part so far, oldest first. A new array each time a part starts, so safe to hand to other threads.</summary>
+    public IReadOnlyList<AudioPart> Parts => _parts;
 
     /// <summary>Bytes in finished parts plus what has been handed to the current file.</summary>
     public long TotalBytes => _finishedBytes + (_stream?.Length ?? 0);
 
-    /// <summary>Writes <paramref name="frames"/> interleaved frames, starting new parts as needed.</summary>
+    /// <summary>Writes <paramref name="frames"/> interleaved frames to the current part.</summary>
     public void Write(float[] interleaved, int frames)
     {
-        int offset = 0;
-        while (frames > 0)
-        {
-            if (_ogg == null || _framesInPart >= _framesPerPart) StartNextPart();
-            int n = (int)Math.Min(frames, _framesPerPart - _framesInPart);
-            _ogg!.WriteSamples(interleaved, offset * _channels, n * _channels);
-            _framesInPart += n;
-            offset += n;
-            frames -= n;
-        }
+        if (_ogg == null) throw new InvalidOperationException("No part started.");
+        _ogg.WriteSamples(interleaved, 0, frames * _channels);
     }
 
     /// <summary>Pushes everything written so far to disk.</summary>
     public void Flush() => _stream?.Flush(flushToDisk: true);
 
-    private void StartNextPart()
+    /// <summary>Finishes the current part and starts a new one whose first sample is at <paramref name="start"/>.</summary>
+    public void StartPart(DateTime start)
     {
         FinishPart();
         Directory.CreateDirectory(_folder);
 
-        // Never overwrite: if a file with this name exists (same meeting recorded twice), skip ahead.
-        string path;
-        do
-        {
-            Part++;
-            path = Path.Combine(_folder, $"{_baseName}_audio_{Part:000}.ogg");
-        } while (File.Exists(path));
+        // Never overwrite: if a file with this name exists (app restarted within the second), add a number.
+        var name = $"{_baseName}_audio_{start:HH-mm-ss}";
+        var path = Path.Combine(_folder, name + ".ogg");
+        for (int n = 2; File.Exists(path); n++) path = Path.Combine(_folder, $"{name}_{n}.ogg");
 
         var encoder = OpusCodecFactory.CreateEncoder(AudioMixer.SampleRate, _channels,
             OpusApplication.OPUS_APPLICATION_VOIP, null);
@@ -104,16 +94,27 @@ public sealed class OpusChunkWriter : IDisposable
         encoder.Complexity = 5;
 
         var tags = new OpusTags();
-        tags.Fields["TITLE"] = $"{_title} (part {Part})";
-        tags.Fields["DATE"] = _startedAt.ToString("yyyy-MM-dd HH:mm");
+        tags.Fields["TITLE"] = $"{_title} ({start:HH:mm:ss})";
+        tags.Fields["DATE"] = start.ToString("yyyy-MM-dd HH:mm:ss");
         if (_channelNote.Length > 0) tags.Fields["COMMENT"] = _channelNote;
 
         _stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         _ogg = new OpusOggWriteStream(encoder, _stream, tags, AudioMixer.SampleRate, 5, leaveOpen: true);
-        _framesInPart = 0;
-        CurrentPath = path;
-        _files.Add(path);
+        _parts = [.. _parts, new AudioPart(path, start)];
         Log.Write($"Recording audio to {Path.GetFileName(path)}");
+    }
+
+    /// <summary>
+    /// When the part that starts at <paramref name="now"/> should end: the next multiple of
+    /// <paramref name="length"/> since midnight (14:00, 14:10, ... for 10 minutes), so file names are
+    /// round times. A part never gets shorter than a minute; it runs on to the boundary after.
+    /// </summary>
+    public static DateTime NextBoundary(DateTime now, TimeSpan length)
+    {
+        if (length < TimeSpan.FromMinutes(1)) return now + length;
+        var sinceMidnight = now - now.Date;
+        var boundary = now.Date + length * (Math.Floor(sinceMidnight / length) + 1);
+        return boundary - now < TimeSpan.FromMinutes(1) ? boundary + length : boundary;
     }
 
     private void FinishPart()

@@ -37,7 +37,9 @@ stays on your PC.
 - 🤖 **Hands-free.** Detects when you join a meeting, can switch Teams captions on for you, and saves when the meeting ends.
 - 📄 **Five export formats:** plain text, Markdown, JSON, CSV (opens in Excel) and WebVTT subtitles.
 - 💾 **Crash-safe.** A backup copy is written every 15 seconds, and the transcript files themselves are re-saved every few minutes during the meeting, so a crash or reboot doesn't lose the meeting.
-- 🎧 **Audio recording.** Records your microphone and what Teams plays (speaker loopback) as small Ogg Opus files next to the transcript: your voice on the left channel, everyone else on the right. A new file starts every 10 minutes, and the file being written stays playable even after a crash.
+- 🎧 **Audio recording.** Records your microphone and what Teams plays (speaker loopback) as small Ogg Opus files next to the transcript: your voice on the left channel, everyone else on the right. A new file starts every 10 minutes on the clock (14:00, 14:10, …) and is named after its start time, and every transcript line says which file and where in it to listen (`🔊 14-10-00 @ 3:23`). The file being written stays playable even after a crash.
+- 📁 **Organised by meeting.** Each meeting gets a folder, with a folder per day inside: `Weekly sync\2026-11-18\`. The transcript and its audio sit together.
+- 📞 **Several calls at once.** When you join a meeting while another waits on hold, the first meeting is saved and finished under its own name and a new transcript starts.
 - ✏️ **Rename speakers.** Right-click to fix a name (for example a meeting-room account). The new name is remembered for future meetings.
 - 🔒 **Private.** No network access, no admin rights. Audio is recorded only when that setting is on.
 
@@ -100,15 +102,21 @@ Speakers: Alex Johnson, Sam Lee
 |---|---|
 | **Save to** | Folder for transcripts (default `Documents\Teams Transcripts`) |
 | **File name** | Pattern made from `{date}`, `{time}` and `{title}`, e.g. `2026-10-14_10-00_Weekly sync.txt` |
+| **Subfolders** | Folders inside the save folder, separated by `/` (default `{title}/{date}`, e.g. `Weekly sync\2026-10-14\`). Leave empty to save everything in one folder |
 | **Formats** | Which formats to write when saving: TXT, MD, JSON, CSV, VTT |
 | **Auto-save when the meeting ends** | Saves as soon as you leave the meeting |
 | **Turn on Teams live captions automatically** | Switches on "Show live captions" when a meeting starts |
 | **Auto-scroll** | Keeps the newest caption in view |
 | **During the meeting, save the transcript** | Re-saves the transcript files every 1–10 minutes while the meeting is on (default 2), overwriting the same files |
-| **Record meeting audio** | Records the meeting next to the transcript as `<file name>_audio_001.ogg`, `_002.ogg`, … |
+| **Record meeting audio** | Records the meeting next to the transcript as `<file name>_audio_14-03-07.ogg`, `_audio_14-10-00.ogg`, …: each file is named after the time it starts |
 | **Audio quality** | Stereo (me left, others right) at 48 or 64 kbps, or everyone mixed in mono at 16 or 24 kbps. Opus merges the two sides of a stereo file below ~44 kbps, so stereo starts at 48 kbps |
-| **New file every** | Length of each audio part (5–60 minutes, default 10) |
+| **New file every** | Length of each audio part (5–60 minutes, default 10). Parts start on round times, so the first one is shorter |
 | **Me (microphone) / Others (speaker output)** | Devices to record. The defaults follow Windows' default and default communications devices, and recording switches over when a headset is plugged in mid-meeting |
+
+**Finding a line in the audio.** The audio runs in step with the clock, so a line said at 14:13:25 is
+3:25 into the file whose name ends `14-10-00`. Saved transcripts spell it out: each line in TXT ends with
+`🔊 14-10-00 @ 3:23`, Markdown shows it after the speaker, and JSON and CSV have the file name and position.
+The position starts 2 seconds early because Teams shows a caption a moment after the words are spoken.
 
 Audio sizes per hour: about 21 MB (stereo 48 kbps), 11 MB (mono 24 kbps), 7 MB (mono 16 kbps).
 Ogg Opus plays in VLC and the Windows Media Player app, and ffmpeg and Whisper read it directly. The
@@ -172,6 +180,7 @@ for 30 days).
 TeamsCaptionsSaver.Desktop/
 ├── Capture/
 │   ├── TeamsCaptionReader.cs     Finds Teams windows, the meeting and the captions; turns captions on
+│   ├── MeetingSelector.cs        Picks the meeting to follow when one is on hold
 │   ├── CaptionParser.cs          Turns a UI snapshot into (speaker, text) pairs
 │   ├── UiNode.cs                 Snapshot of one UI Automation element
 │   └── Native.cs                 Win32 window enumeration
@@ -179,7 +188,7 @@ TeamsCaptionsSaver.Desktop/
 │   ├── MeetingAudioRecorder.cs   Recorder thread: devices, wall-clock pacing, file parts
 │   ├── CaptureSource.cs          One WASAPI microphone or loopback capture, converted to 48 kHz mono
 │   ├── AudioMixer.cs             Keeps sources in sync (silence fill, clock drift) and mixes them
-│   ├── OpusChunkWriter.cs        Ogg Opus encoder, a new file every N minutes
+│   ├── OpusChunkWriter.cs        Ogg Opus encoder, files named after their start time
 │   └── AudioDevices.cs           Device choices for the settings
 ├── Transcript/
 │   ├── TranscriptSession.cs      Merges each scan into the transcript, without duplicates

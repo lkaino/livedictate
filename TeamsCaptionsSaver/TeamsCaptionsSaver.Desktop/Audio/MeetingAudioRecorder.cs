@@ -22,11 +22,14 @@ public sealed record AudioRecorderStatus(
     long Bytes,
     int Microphones,
     int Outputs,
-    string? Error);
+    string? Error,
+    IReadOnlyList<AudioPart> Parts);
 
 /// <summary>
 /// Records the microphone and the speaker output (loopback, i.e. what Teams plays) for one meeting
 /// into Ogg Opus parts. In stereo, the microphone goes left and the speaker output right.
+/// The audio follows the wall clock (silence fills gaps), so a part that starts at 14:10:00 has what
+/// was said at 14:13:25 exactly 3:25 in. Parts start on round times (see <see cref="OpusChunkWriter.NextBoundary"/>).
 /// Runs on its own MTA thread, which owns all the WASAPI objects.
 /// </summary>
 public sealed class MeetingAudioRecorder : IDisposable
@@ -45,7 +48,7 @@ public sealed class MeetingAudioRecorder : IDisposable
     private Thread? _thread;
     private volatile bool _stop;
     private volatile bool _paused;
-    private volatile AudioRecorderStatus _status = new(false, 0, TimeSpan.Zero, 0, 0, 0, null);
+    private volatile AudioRecorderStatus _status = new(false, 0, TimeSpan.Zero, 0, 0, 0, null, []);
 
     public MeetingAudioRecorder(AudioRecorderOptions options) => _options = options;
 
@@ -90,15 +93,28 @@ public sealed class MeetingAudioRecorder : IDisposable
                 ? "Left channel: my microphone. Right channel: other people (speaker output)."
                 : "Microphone and speaker output mixed together.";
             writer = new OpusChunkWriter(_options.Folder, _options.BaseName, _options.Title, _options.Channels,
-                _options.BitrateKbps, _options.PartLength, note);
+                _options.BitrateKbps, note);
 
             UpdateSources(enumerator, mixer, sources);
             var clock = Stopwatch.StartNew();
+            var startedAt = DateTime.Now;
             var lastDeviceCheck = TimeSpan.Zero;
             var lastFlush = TimeSpan.Zero;
             long written = 0;
             long offset = 0; // frames of wall-clock time skipped (sleep)
             var buffer = new float[AudioMixer.SampleRate * mixer.Channels];
+
+            // Frame n of the recording was captured at this local time.
+            DateTime TimeOf(long frame) => startedAt.AddSeconds((double)(frame + offset) / AudioMixer.SampleRate);
+            long partEnd = 0; // frame where the next part starts
+            DateTime partEndTime = default;
+            void StartPart(DateTime start)
+            {
+                writer.StartPart(start);
+                partEndTime = OpusChunkWriter.NextBoundary(start, _options.PartLength);
+                partEnd = written + Math.Max(1, (long)Math.Round((partEndTime - start).TotalSeconds * AudioMixer.SampleRate));
+            }
+            StartPart(TimeOf(0));
 
             while (!_stop)
             {
@@ -111,11 +127,14 @@ public sealed class MeetingAudioRecorder : IDisposable
                     Log.Write($"Audio clock jumped {(target - written) / AudioMixer.SampleRate} s (sleep?); skipping the gap.");
                     offset += target - written;
                     target = written;
+                    // The times in the file name must stay true, so continue in a new part.
+                    StartPart(TimeOf(written));
                 }
 
                 while (written < target)
                 {
-                    int frames = (int)Math.Min(target - written, AudioMixer.SampleRate);
+                    if (written >= partEnd) StartPart(partEndTime);
+                    int frames = (int)Math.Min(Math.Min(target - written, AudioMixer.SampleRate), partEnd - written);
                     mixer.Mix(buffer, frames);
                     if (_paused) Array.Clear(buffer, 0, frames * mixer.Channels);
                     writer.Write(buffer, frames);
@@ -134,7 +153,8 @@ public sealed class MeetingAudioRecorder : IDisposable
                 }
 
                 _status = new(true, writer.Part, TimeSpan.FromSeconds((double)written / AudioMixer.SampleRate),
-                    writer.TotalBytes, sources.Count(s => !s.IsLoopback), sources.Count(s => s.IsLoopback), null);
+                    writer.TotalBytes, sources.Count(s => !s.IsLoopback), sources.Count(s => s.IsLoopback), null,
+                    writer.Parts);
             }
         }
         catch (Exception ex)
@@ -148,8 +168,8 @@ public sealed class MeetingAudioRecorder : IDisposable
             try
             {
                 writer?.Dispose();
-                if (writer?.Files.Count > 0)
-                    Log.Write($"Audio saved: {string.Join(", ", writer.Files.Select(Path.GetFileName))}");
+                if (writer?.Parts.Count > 0)
+                    Log.Write($"Audio saved: {string.Join(", ", writer.Parts.Select(p => Path.GetFileName(p.Path)))}");
             }
             catch (Exception ex)
             {
@@ -157,7 +177,7 @@ public sealed class MeetingAudioRecorder : IDisposable
                 Log.Write($"Could not finish the audio file: {ex.Message}");
             }
             var last = _status;
-            _status = last with { Running = false, Error = error };
+            _status = last with { Running = false, Error = error, Parts = writer?.Parts ?? last.Parts };
         }
     }
 

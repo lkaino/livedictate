@@ -11,6 +11,9 @@ public sealed class AppSettings
     /// <summary>Variables: {date} {time} {title}</summary>
     public string FilenamePattern { get; set; } = "{date}_{time}_{title}";
 
+    /// <summary>Subfolders of <see cref="OutputFolder"/>, separated by / (variables as above; empty = none).</summary>
+    public string SubfolderPattern { get; set; } = "{title}/{date}";
+
     public bool AutoSaveOnMeetingEnd { get; set; } = true;
     public List<string> AutoSaveFormats { get; set; } = ["txt", "md", "json"];
 

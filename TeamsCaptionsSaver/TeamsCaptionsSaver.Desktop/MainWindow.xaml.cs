@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     private bool _demoMode;
     private bool _loadingSettings;
     private MeetingAudioRecorder? _recorder;
+    private TranscriptSession? _recordingSession; // the session _recorder's audio belongs to
     private AudioRecorderStatus? _lastAudioStatus; // shown after a recording ends
     private DateTime _lastPeriodicSave;
     private int _meetingKey; // the reader's id of the meeting this session belongs to
@@ -173,6 +174,7 @@ public partial class MainWindow : Window
 
         // Fix the file name now: periodic saves then overwrite the same files, and the audio matches it.
         _session.FileBaseName = TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session);
+        _session.Subfolder = TranscriptExporter.BuildSubfolder(_settings.SubfolderPattern, _session);
         _lastPeriodicSave = DateTime.Now;
         StartAudio();
     }
@@ -236,7 +238,8 @@ public partial class MainWindow : Window
         try
         {
             var turns = useFilter ? ShownTurns() : null;
-            var paths = TranscriptExporter.SaveAll(_session, _settings.OutputFolder, _settings.FilenamePattern,
+            SyncAudioParts();
+            var paths = TranscriptExporter.SaveAll(_session, SessionFolder, _settings.FilenamePattern,
                 _settings.AutoSaveFormats.Count > 0 ? _settings.AutoSaveFormats : ["txt"], turns);
             // A filtered save leaves the rest unsaved, so keep warning about it on close.
             if (!TranscriptExporter.IsFiltered(_session, turns)) _session.HasUnsavedChanges = false;
@@ -252,6 +255,8 @@ public partial class MainWindow : Window
             return null;
         }
     }
+
+    private string SessionFolder => TranscriptExporter.FolderFor(_session, _settings.OutputFolder, _settings.SubfolderPattern);
 
     /// <summary>Crash protection: keeps a JSON copy of the live transcript in %LOCALAPPDATA%.</summary>
     private void WriteBackup()
@@ -283,11 +288,12 @@ public partial class MainWindow : Window
         if (!EnsureHasEntries()) return;
         var turns = ShownTurns();
         bool filtered = TranscriptExporter.IsFiltered(_session, turns);
-        Directory.CreateDirectory(_settings.OutputFolder);
+        SyncAudioParts();
+        Directory.CreateDirectory(SessionFolder);
         var dialog = new SaveFileDialog
         {
             Filter = TranscriptExporter.FileDialogFilter,
-            InitialDirectory = _settings.OutputFolder,
+            InitialDirectory = SessionFolder,
             FileName = TranscriptExporter.BaseNameFor(_session, _settings.FilenamePattern) + (filtered ? "_filtered" : ""),
         };
         if (dialog.ShowDialog(this) != true) return;
@@ -349,8 +355,9 @@ public partial class MainWindow : Window
         try
         {
             int channels = _settings.AudioChannels == 1 ? 1 : 2;
+            _recordingSession = _session;
             _recorder = new MeetingAudioRecorder(new AudioRecorderOptions(
-                _settings.OutputFolder,
+                SessionFolder,
                 _session.FileBaseName ?? TranscriptExporter.BuildFileName(_settings.FilenamePattern, _session),
                 _session.Title,
                 _settings.MicrophoneDevice,
@@ -379,7 +386,15 @@ public partial class MainWindow : Window
         _recorder = null;
         recorder.Stop();
         _lastAudioStatus = recorder.Status;
+        if (_recordingSession != null) _recordingSession.AudioParts = recorder.Status.Parts;
+        _recordingSession = null;
         UpdateAudioStatus();
+    }
+
+    /// <summary>Copies the audio file list into the session, so saved transcripts can point into the audio.</summary>
+    private void SyncAudioParts()
+    {
+        if (_recorder != null && _recordingSession != null) _recordingSession.AudioParts = _recorder.Status.Parts;
     }
 
     private void UpdateAudioStatus()
@@ -436,8 +451,10 @@ public partial class MainWindow : Window
 
     private void OnOpenFolderClick(object sender, RoutedEventArgs e)
     {
-        Directory.CreateDirectory(_settings.OutputFolder);
-        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_settings.OutputFolder}\"") { UseShellExecute = true });
+        // The current meeting's folder once something is in it, otherwise the main folder.
+        var folder = Directory.Exists(SessionFolder) ? SessionFolder : _settings.OutputFolder;
+        Directory.CreateDirectory(folder);
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
     }
 
     private async void OnDiagnosticsClick(object sender, RoutedEventArgs e)
@@ -766,6 +783,7 @@ public partial class MainWindow : Window
         _loadingSettings = true;
         FolderBox.Text = _settings.OutputFolder;
         PatternBox.Text = _settings.FilenamePattern;
+        SubfolderBox.Text = _settings.SubfolderPattern;
         AutoSaveBox.IsChecked = _settings.AutoSaveOnMeetingEnd;
         AutoEnableBox.IsChecked = _settings.AutoEnableCaptions;
         AutoScrollBox.IsChecked = _settings.AutoScroll;
@@ -831,6 +849,7 @@ public partial class MainWindow : Window
         if (_loadingSettings) return;
         if (!string.IsNullOrWhiteSpace(FolderBox.Text)) _settings.OutputFolder = FolderBox.Text.Trim();
         if (!string.IsNullOrWhiteSpace(PatternBox.Text)) _settings.FilenamePattern = PatternBox.Text.Trim();
+        _settings.SubfolderPattern = SubfolderBox.Text.Trim(); // empty = everything in the main folder
         _settings.AutoSaveOnMeetingEnd = AutoSaveBox.IsChecked == true;
         _settings.AutoEnableCaptions = AutoEnableBox.IsChecked == true;
         _settings.AutoScroll = AutoScrollBox.IsChecked == true;

@@ -26,6 +26,12 @@ public sealed class TranscriptSession
     /// the same files and the audio parts share the transcript's name. Null = built from the pattern.
     /// </summary>
     public string? FileBaseName { get; set; }
+
+    /// <summary>Folder under the output folder (e.g. "Weekly sync\2026-11-18"), fixed like <see cref="FileBaseName"/>.</summary>
+    public string? Subfolder { get; set; }
+
+    /// <summary>The meeting's audio files, oldest first, each with the time it starts.</summary>
+    public IReadOnlyList<Audio.AudioPart> AudioParts { get; set; } = [];
     /// <summary>Every caption block Teams showed, in order. Exports like WebVTT use these directly.</summary>
     public ObservableCollection<CaptionEntry> Entries { get; } = [];
 

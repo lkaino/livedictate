@@ -45,6 +45,42 @@ public class MeetingSelectorTests
     }
 
     [Fact]
+    public void A_newly_joined_meeting_wins_even_when_Teams_hold_screen_is_not_recognised()
+    {
+        // You're followed in Weekly sync, then join Standup: Teams holds Weekly sync in the background.
+        var weekly = Meeting(WeeklyWindow, "Weekly sync", captions: true);
+        var standup = Meeting(StandupWindow, "Standup");
+        var known = new HashSet<IntPtr> { WeeklyWindow };
+        Assert.Same(standup, MeetingSelector.Choose([weekly, standup], WeeklyWindow, WeeklyWindow, known));
+
+        // Next scan: Standup is known and followed, so it stays.
+        known.Add(StandupWindow);
+        var superseded = new HashSet<IntPtr> { WeeklyWindow };
+        Assert.Same(standup, MeetingSelector.Choose([weekly, standup], StandupWindow, WeeklyWindow, known, superseded));
+    }
+
+    [Fact]
+    public void A_meeting_left_for_another_is_only_followed_again_from_its_own_window()
+    {
+        // Standup ended; Weekly sync is still on hold in the background.
+        var weekly = Meeting(WeeklyWindow, "Weekly sync");
+        var known = new HashSet<IntPtr> { WeeklyWindow };
+        var superseded = new HashSet<IntPtr> { WeeklyWindow };
+        Assert.Null(MeetingSelector.Choose([weekly], IntPtr.Zero, MainTeamsWindow, known, superseded));
+
+        // You bring its window to the front to resume it.
+        Assert.Same(weekly, MeetingSelector.Choose([weekly], IntPtr.Zero, WeeklyWindow, known, superseded));
+    }
+
+    [Fact]
+    public void The_first_scan_treats_no_meeting_as_newly_joined()
+    {
+        var weekly = Meeting(WeeklyWindow, "Weekly sync");
+        var standup = Meeting(StandupWindow, "Standup", captions: true);
+        Assert.Same(standup, MeetingSelector.Choose([weekly, standup], IntPtr.Zero, IntPtr.Zero, known: null));
+    }
+
+    [Fact]
     public void A_window_with_only_captions_is_used_when_no_window_has_meeting_controls()
     {
         var captionsOnly = Meeting(MainTeamsWindow, "Weekly sync", captions: true, hangup: false);
@@ -59,6 +95,7 @@ public class MeetingSelectorTests
         Assert.True(MeetingSelector.IsOnHold(Tree(new UiNode { ControlType = "Button", Name = "Resume" })));
         Assert.True(MeetingSelector.IsOnHold(Tree(new UiNode { ControlType = "Button", Name = "Resume call" })));
         Assert.True(MeetingSelector.IsOnHold(Tree(new UiNode { ControlType = "Button", AutomationId = "resume-call-button" })));
+        Assert.True(MeetingSelector.IsOnHold(Tree(new UiNode { ControlType = "Button", Name = "Jatka" })));
 
         Assert.False(MeetingSelector.IsOnHold(Tree(
             new UiNode { ControlType = "Button", Name = "Leave" },
