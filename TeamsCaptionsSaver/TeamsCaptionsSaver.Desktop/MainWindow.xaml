@@ -175,14 +175,32 @@
         </Border>
 
         <!-- Settings -->
-        <Expander Grid.Row="5" Header="Settings" Margin="0,10,0,0">
+        <Expander Grid.Row="5" Header="Settings" Margin="0,10,0,0"
+                  Expanded="OnSettingsExpanded" Collapsed="OnSettingsCollapsed">
             <Grid Margin="4,8,0,0">
+                <Grid.Resources>
+                    <!-- A device with a bar showing its sound level right now. -->
+                    <DataTemplate x:Key="DeviceItemTemplate">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Left" Width="36" Height="8" Margin="0,0,6,0" CornerRadius="2"
+                                    Background="#E5E7EB" VerticalAlignment="Center" ClipToBounds="True">
+                                <Rectangle Fill="#16A34A" RenderTransformOrigin="0,0.5">
+                                    <Rectangle.RenderTransform>
+                                        <ScaleTransform ScaleX="{Binding Level, Mode=OneWay}" />
+                                    </Rectangle.RenderTransform>
+                                </Rectangle>
+                            </Border>
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </DockPanel>
+                    </DataTemplate>
+                </Grid.Resources>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -240,14 +258,17 @@
 
                 <WrapPanel Grid.Row="7" Grid.ColumnSpan="3" Margin="0,6,0,0">
                     <TextBlock Text="Me (microphone):" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ComboBox x:Name="MicrophoneBox" Width="260" DropDownOpened="OnDevicesDropDownOpened"
-                              SelectionChanged="OnSettingChanged"
+                    <ComboBox x:Name="MicrophoneBox" Width="300" DropDownOpened="OnDevicesDropDownOpened"
+                              SelectionChanged="OnSettingChanged" ItemTemplate="{StaticResource DeviceItemTemplate}"
                               ToolTip="Recorded even while you're muted in Teams." />
                     <TextBlock Text="Others (speaker output):" VerticalAlignment="Center" Margin="12,0,6,0" />
-                    <ComboBox x:Name="OutputBox" Width="260" DropDownOpened="OnDevicesDropDownOpened"
-                              SelectionChanged="OnSettingChanged"
+                    <ComboBox x:Name="OutputBox" Width="300" DropDownOpened="OnDevicesDropDownOpened"
+                              SelectionChanged="OnSettingChanged" ItemTemplate="{StaticResource DeviceItemTemplate}"
                               ToolTip="Records what plays through this device - pick the one Teams uses." />
                 </WrapPanel>
+
+                <TextBlock Grid.Row="8" Grid.ColumnSpan="3" Margin="0,4,0,0" Foreground="#777" TextWrapping="Wrap"
+                           Text="The green bars show sound on each device right now. Speak, or play something, and open a list to see which device hears it." />
             </Grid>
         </Expander>
 

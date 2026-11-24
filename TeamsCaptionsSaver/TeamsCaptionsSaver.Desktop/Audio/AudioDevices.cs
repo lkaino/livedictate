@@ -1,10 +1,31 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 
 namespace TeamsCaptionsSaver.Desktop.Audio;
 
-public sealed record AudioDeviceOption(string Id, string Name)
+/// <summary>One entry in a device list: a special choice or a device, with its live sound level.</summary>
+public sealed class AudioDeviceOption(string id, string name) : INotifyPropertyChanged
 {
+    private double _level;
+
+    public string Id { get; } = id;
+    public string Name { get; } = name;
+
+    /// <summary>Sound level right now for the level bar, 0 (silent) to 1 (loud).</summary>
+    public double Level
+    {
+        get => _level;
+        set
+        {
+            if (Math.Abs(_level - value) < 0.005) return;
+            _level = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Level)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public override string ToString() => Name;
 }
 

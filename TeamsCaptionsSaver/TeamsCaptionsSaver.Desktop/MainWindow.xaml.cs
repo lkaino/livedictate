@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     private readonly TeamsCaptionReader _reader = new();
     private readonly DispatcherTimer _backupTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly DispatcherTimer _tickTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _levelTimer = new() { Interval = TimeSpan.FromMilliseconds(80) };
+    private AudioLevelMonitor? _levelMonitor; // runs while the settings are open
     private readonly TranscriptFilter _filter = new();
 
     private TranscriptSession _session;
@@ -76,6 +78,7 @@ public partial class MainWindow : Window
         _backupTimer.Tick += (_, _) => WriteBackup();
         _backupTimer.Start();
         _tickTimer.Tick += (_, _) => OnTick();
+        _levelTimer.Tick += (_, _) => UpdateDeviceLevels();
         _tickTimer.Start();
 
         // Windows logging off or shutting down doesn't close the window the normal way.
@@ -844,6 +847,43 @@ public partial class MainWindow : Window
 
     private void OnDevicesDropDownOpened(object? sender, EventArgs e) => LoadDeviceLists();
 
+    // --- Device level bars --------------------------------------------------------------------
+
+    private void OnSettingsExpanded(object sender, RoutedEventArgs e)
+    {
+        _levelMonitor ??= new AudioLevelMonitor();
+        _levelTimer.Start();
+    }
+
+    private void OnSettingsCollapsed(object sender, RoutedEventArgs e) => StopDeviceLevels();
+
+    private void StopDeviceLevels()
+    {
+        _levelTimer.Stop();
+        _levelMonitor?.Dispose();
+        _levelMonitor = null;
+        foreach (var option in DeviceOptions(MicrophoneBox).Concat(DeviceOptions(OutputBox))) option.Level = 0;
+    }
+
+    private void UpdateDeviceLevels()
+    {
+        if (_levelMonitor?.Levels is not { } levels) return;
+        foreach (var (box, output) in new[] { (MicrophoneBox, false), (OutputBox, true) })
+            foreach (var option in DeviceOptions(box))
+            {
+                var peak = levels.GetValueOrDefault(AudioLevelMonitor.Key(output, option.Id));
+                // Jump up at once, fall back gently, so short sounds are still visible.
+                option.Level = Math.Max(MeterLevel(peak), option.Level - 0.05);
+            }
+    }
+
+    private static IEnumerable<AudioDeviceOption> DeviceOptions(ComboBox box) =>
+        box.ItemsSource as IEnumerable<AudioDeviceOption> ?? [];
+
+    /// <summary>Peak amplitude to bar length on a decibel scale: -60 dB or quieter is empty, 0 dB full.</summary>
+    internal static double MeterLevel(float peak) =>
+        peak <= 0.001f ? 0 : Math.Clamp((20 * Math.Log10(peak) + 60) / 60, 0, 1);
+
     private void OnSettingChanged(object sender, RoutedEventArgs e)
     {
         if (_loadingSettings) return;
@@ -897,6 +937,7 @@ public partial class MainWindow : Window
             return;
         }
         StopAudio();
+        StopDeviceLevels();
         WriteBackup();
         _backupTimer.Stop();
         _tickTimer.Stop();

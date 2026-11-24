@@ -111,7 +111,7 @@ Speakers: Alex Johnson, Sam Lee
 | **Record meeting audio** | Records the meeting next to the transcript as `<file name>_audio_14-03-07.ogg`, `_audio_14-10-00.ogg`, …: each file is named after the time it starts |
 | **Audio quality** | Stereo (me left, others right) at 48 or 64 kbps, or everyone mixed in mono at 16 or 24 kbps. Opus merges the two sides of a stereo file below ~44 kbps, so stereo starts at 48 kbps |
 | **New file every** | Length of each audio part (5–60 minutes, default 10). Parts start on round times, so the first one is shorter |
-| **Me (microphone) / Others (speaker output)** | Devices to record. The defaults follow Windows' default and default communications devices, and recording switches over when a headset is plugged in mid-meeting |
+| **Me (microphone) / Others (speaker output)** | Devices to record. The defaults follow Windows' default and default communications devices, and recording switches over when a headset is plugged in mid-meeting. A green bar next to each device shows its sound level while Settings is open, so you can see which one hears you or plays Teams |
 
 **Finding a line in the audio.** The audio runs in step with the clock, so a line said at 14:13:25 is
 3:25 into the file whose name ends `14-10-00`. Saved transcripts spell it out: each line in TXT ends with
