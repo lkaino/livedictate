@@ -40,8 +40,9 @@ stays on your PC.
 - 🎧 **Audio recording.** Records your microphone and what Teams plays (speaker loopback) as small Ogg Opus files next to the transcript: your voice on the left channel, everyone else on the right. A new file starts every 10 minutes on the clock (14:00, 14:10, …) and is named after its start time, and every transcript line says which file and where in it to listen (`🔊 14-10-00 @ 3:23`). The file being written stays playable even after a crash.
 - 📁 **Organised by meeting.** Each meeting gets a folder, with a folder per day inside: `Weekly sync\2026-11-18\`. The transcript and its audio sit together.
 - 📞 **Several calls at once.** When you join a meeting while another waits on hold, the first meeting is saved and finished under its own name and a new transcript starts.
+- 📝 **Meeting minutes with an AI agent.** Pick a saved meeting and a project, and an agent such as GitHub Copilot CLI writes the minutes in the project's repository, where it can read the documentation. Tell it what's wrong in your own words; it revises the minutes and offers to remember speaker names, misheard terms and rules for next time.
 - ✏️ **Rename speakers.** Right-click to fix a name (for example a meeting-room account). The new name is remembered for future meetings.
-- 🔒 **Private.** No network access, no admin rights. Audio is recorded only when that setting is on.
+- 🔒 **Private.** No network access, no admin rights. Audio is recorded only when that setting is on. When you ask for minutes, the transcript goes to the AI agent you set up, and nowhere else.
 
 ## How it works
 
@@ -122,6 +123,46 @@ Audio sizes per hour: about 21 MB (stereo 48 kbps), 11 MB (mono 24 kbps), 7 MB (
 Ogg Opus plays in VLC and the Windows Media Player app, and ffmpeg and Whisper read it directly. The
 microphone is recorded even while you're muted in Teams; pause capture if you need it off.
 
+## Meeting minutes (MoM)
+
+**Meetings & minutes…** lists every saved meeting (made from the transcript's JSON file, which is
+therefore always saved). Select one and click **Minutes (MoM)…**.
+
+1. **Set up a project once** (Projects and AI agents…): the project's folder, usually its repository;
+   the AI agent; and how the minutes should look. The default asks for a summary, decisions, an action
+   item table and open questions, in the language of the meeting.
+2. **Name unknown speakers.** If Teams showed someone as "Speaker 1", "Unknown" or "Guest", you're
+   asked who it was, with names from earlier meetings of the same title and the project's people list.
+   For an account several people share, such as a meeting room, right-click it in the main window and
+   choose **Always ask who this is**.
+3. **Create minutes.** The agent runs in the project folder, reads the transcript and writes the minutes.
+4. **Give feedback in your own words**, for example *"Speaker 2 was Liisa. 'café' is Kafka. The budget
+   decision is missing."*, and click **Revise minutes**. The agent writes a new version and sorts each
+   point: a speaker fix, a misheard term, a lasting rule, or something about this meeting only.
+5. **Choose what to remember.** Ticked speaker and term fixes correct this meeting's transcript files too
+   (the original is kept). Terms, people and rules go into the project memory, so the next minutes get
+   them right. **Mark as final** keeps those minutes as the project's example of good minutes.
+
+**Project memory** is a `.mom` folder in the project's repository (or in the app's data folder, if you
+untick that option), with plain Markdown files you can read and edit:
+
+| File | What's in it |
+|---|---|
+| `people.md` | Names and roles |
+| `glossary.md` | Terms and spellings. `- wrong -> right` lines are fixed in the transcript before the agent reads it |
+| `lessons.md` | Rules learned from feedback. Remove ones you no longer want |
+| `examples/latest.md` | The last minutes marked final |
+
+Each meeting's minutes live next to its transcript: `<name>_MoM.md` is the latest version, and the
+`<name>_MoM` folder holds every version, the feedback, the task given to the agent and its session log.
+
+**GitHub Copilot CLI** is set up by default. Install it and sign in once by running `copilot` in a
+terminal. The app runs it without questions (`-p`), lets it write only the minutes folder, and denies
+it shell commands. Other agents can be added under AI agents with their own command line.
+
+The transcript is sent to the agent's AI service. Check that your organisation allows that for meeting
+content.
+
 ## Build from source
 
 ```bash
@@ -190,6 +231,13 @@ TeamsCaptionsSaver.Desktop/
 │   ├── AudioMixer.cs             Keeps sources in sync (silence fill, clock drift) and mixes them
 │   ├── OpusChunkWriter.cs        Ogg Opus encoder, files named after their start time
 │   └── AudioDevices.cs           Device choices for the settings
+├── Mom/
+│   ├── MeetingCatalog.cs         Finds saved meetings
+│   ├── MomWorkspace.cs           One meeting's minutes: versions, feedback, transcript corrections
+│   ├── ProjectMemory.cs          people.md, glossary.md, lessons.md
+│   ├── MomTask.cs                The task file given to the agent
+│   ├── HarnessRunner.cs          Runs the agent's command line
+│   └── Ui/                       Meetings list, minutes window, projects and agents
 ├── Transcript/
 │   ├── TranscriptSession.cs      Merges each scan into the transcript, without duplicates
 │   └── TranscriptExporter.cs     TXT / MD / JSON / CSV / VTT
@@ -201,8 +249,9 @@ TeamsCaptionsSaver.Tests/         Unit tests for parsing, merging, exports and a
 ## Privacy
 
 Live captions and audio can contain sensitive conversation. Transcripts and recordings are stored only
-on your PC, in the folder you choose (if that folder syncs to OneDrive, so do they). The app never sends
-anything over the network. Follow your organisation's policies and the law where you are, and tell the
+on your PC, in the folder you choose (if that folder syncs to OneDrive, so do they). The app itself never
+sends anything over the network; when you ask for minutes, the AI agent you set up sends the transcript
+to its own AI service. Follow your organisation's policies and the law where you are, and tell the
 other participants when you're saving a meeting transcript or recording.
 
 ## License

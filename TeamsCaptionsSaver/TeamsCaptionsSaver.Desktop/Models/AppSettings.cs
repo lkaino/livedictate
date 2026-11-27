@@ -44,6 +44,18 @@ public sealed class AppSettings
 
     public Dictionary<string, string> SpeakerAliases { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Speaker names to always ask about before writing minutes (a meeting room's account, say).</summary>
+    public List<string> AlwaysAskSpeakers { get; set; } = [];
+
+    /// <summary>Command-line AI agents that can write minutes.</summary>
+    public List<Mom.HarnessConfig> Harnesses { get; set; } = [Mom.HarnessConfig.CopilotCli()];
+
+    /// <summary>Projects that minutes are written for.</summary>
+    public List<Mom.MomProject> MomProjects { get; set; } = [];
+
+    /// <summary>The project picked last, offered first next time.</summary>
+    public string? LastMomProject { get; set; }
+
     public static string AppDataFolder { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TeamsCaptionsSaver");
 

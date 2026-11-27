@@ -39,6 +39,8 @@
             <Button Content="Save (selected formats)" Click="OnSaveAllClick" />
             <Button Content="New transcript" Click="OnNewSessionClick" />
             <Button Content="Open folder" Click="OnOpenFolderClick" />
+            <Button Content="Meetings &amp; minutes…" Click="OnMeetingsClick"
+                    ToolTip="All saved meetings. Write minutes (MoM) for them with an AI agent in your project's folder." />
             <Button Content="Diagnostics" Click="OnDiagnosticsClick"
                     ToolTip="Dump the Teams UI tree to a file - useful if captions aren't being picked up." />
         </WrapPanel>
@@ -144,6 +146,8 @@
                     <MenuItem Header="Show all speakers" Click="OnShowAllSpeakersClick" />
                     <Separator />
                     <MenuItem Header="Rename speaker…" Click="OnRenameSpeakerClick" />
+                    <MenuItem Header="Always ask who this is, before writing minutes" Click="OnAlwaysAskClick"
+                              ToolTip="For accounts several people share, such as a meeting room." />
                     <MenuItem Header="Copy selected" Click="OnCopyClick" />
                 </ContextMenu>
             </DataGrid.ContextMenu>
