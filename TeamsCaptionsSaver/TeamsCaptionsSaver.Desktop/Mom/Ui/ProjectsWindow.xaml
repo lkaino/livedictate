@@ -1,0 +1,77 @@
+<Window x:Class="TeamsCaptionsSaver.Desktop.Mom.Ui.ProjectsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Projects and AI agents" Height="620" Width="860" MinHeight="420" MinWidth="640"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Save" IsDefault="True" Click="OnSaveClick" />
+            <Button Content="Cancel" IsCancel="True" Margin="0" />
+        </StackPanel>
+        <TabControl>
+            <TabItem Header="Projects">
+                <DockPanel Margin="8">
+                    <DockPanel DockPanel.Dock="Left" Width="200" Margin="0,0,12,0">
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Content="Add" Click="OnAddProjectClick" />
+                            <Button Content="Remove" Click="OnRemoveProjectClick" Margin="0" />
+                        </StackPanel>
+                        <ListBox x:Name="ProjectList" DisplayMemberPath="Name" SelectionChanged="OnProjectSelected" />
+                    </DockPanel>
+                    <Grid x:Name="ProjectForm" IsEnabled="False">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="Name:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <TextBox x:Name="NameBox" Grid.Column="1" Grid.ColumnSpan="2" Padding="3" TextChanged="OnNameChanged" />
+
+                        <TextBlock Grid.Row="1" Text="Folder:" VerticalAlignment="Center" Margin="0,6,8,0" />
+                        <TextBox x:Name="FolderBox" Grid.Row="1" Grid.Column="1" Padding="3" Margin="0,6,0,0"
+                                 ToolTip="The project's repository or documentation folder. The agent runs here and can read everything in it." />
+                        <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Margin="6,6,0,0" Click="OnBrowseClick" />
+
+                        <TextBlock Grid.Row="2" Text="AI agent:" VerticalAlignment="Center" Margin="0,6,8,0" />
+                        <ComboBox x:Name="HarnessBox" Grid.Row="2" Grid.Column="1" Margin="0,6,0,0" />
+
+                        <CheckBox x:Name="MemoryInRepoBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0"
+                                  Content="Keep the project memory in the folder above (.mom), versioned with the repository"
+                                  ToolTip="People, glossary and lessons. Untick to keep them in this app's own data folder instead." />
+
+                        <TextBlock Grid.Row="4" Grid.ColumnSpan="3" Margin="0,12,0,4"
+                                   Text="How to write the minutes (sections, language, style):" />
+                        <TextBox x:Name="PromptBox" Grid.Row="5" Grid.ColumnSpan="3" AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" Padding="4" FontFamily="Consolas" />
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+            <TabItem Header="AI agents">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,8" Foreground="#555"
+                               Text="Command-line agents that write the minutes. In the arguments, {prompt} is a one-line instruction to read the task file, {task} the task file, {momFolder} where the minutes are written, {workdir} the project folder and {log} a file for the session log." />
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="Add GitHub Copilot CLI" Click="OnAddCopilotClick" />
+                    </StackPanel>
+                    <DataGrid x:Name="HarnessGrid" AutoGenerateColumns="False" CanUserAddRows="True" CanUserDeleteRows="True"
+                              HeadersVisibility="Column">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="170" />
+                            <DataGridTextColumn Header="Command" Binding="{Binding Command}" Width="110" />
+                            <DataGridTextColumn Header="Arguments" Binding="{Binding Arguments}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

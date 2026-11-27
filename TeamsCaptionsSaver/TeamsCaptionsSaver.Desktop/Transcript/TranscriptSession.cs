@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Text.Json;
 using TeamsCaptionsSaver.Desktop.Models;
 
 namespace TeamsCaptionsSaver.Desktop.Transcript;
@@ -18,7 +20,7 @@ public sealed class TranscriptSession
 
     public Guid Id { get; } = Guid.NewGuid();
     public string Title { get; set; } = "Teams Meeting";
-    public DateTime StartedAt { get; } = DateTime.Now;
+    public DateTime StartedAt { get; init; } = DateTime.Now;
     public DateTime? EndedAt { get; set; }
 
     /// <summary>
@@ -112,6 +114,72 @@ public sealed class TranscriptSession
         Turns.Clear();
         foreach (var e in Entries) AddToTurns(e);
         MarkChanged();
+    }
+
+    /// <summary>
+    /// Reads a transcript saved as JSON by <see cref="TranscriptExporter"/>, so it can be corrected and
+    /// saved again. <paramref name="fix"/> may change each caption (speaker, text) before it's grouped into turns.
+    /// </summary>
+    public static TranscriptSession LoadJson(string path, Action<CaptionEntry>? fix = null)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var root = doc.RootElement;
+        var session = new TranscriptSession(s => s)
+        {
+            Title = Str(root, "title") ?? "Teams Meeting",
+            StartedAt = root.GetProperty("startedAt").GetDateTime(),
+            EndedAt = root.TryGetProperty("endedAt", out var ended) && ended.ValueKind == JsonValueKind.String
+                ? ended.GetDateTime() : null,
+            FileBaseName = Path.GetFileNameWithoutExtension(path),
+        };
+
+        var folder = Path.GetDirectoryName(path) ?? "";
+        if (root.TryGetProperty("audioFiles", out var audio))
+            session.AudioParts = audio.EnumerateArray()
+                .Select(a => new Audio.AudioPart(Path.Combine(folder, Str(a, "file") ?? ""), a.GetProperty("start").GetDateTime()))
+                .ToList();
+
+        var marks = new List<(CaptionEntry First, bool Bookmarked, List<string> Highlights)>();
+        foreach (var turn in root.GetProperty("turns").EnumerateArray())
+        {
+            var speaker = Str(turn, "speaker") ?? "";
+            var raw = Str(turn, "originalSpeaker") ?? speaker;
+            var end = turn.TryGetProperty("end", out var e) ? e.GetDateTime() : session.StartedAt;
+            var captions = turn.GetProperty("captions").EnumerateArray().ToList();
+            CaptionEntry? first = null;
+            for (int i = 0; i < captions.Count; i++)
+            {
+                var time = captions[i].GetProperty("time").GetDateTime();
+                var entry = new CaptionEntry
+                {
+                    Key = Guid.NewGuid().ToString("N"),
+                    FirstSeen = time,
+                    RawSpeaker = raw,
+                    Speaker = speaker,
+                    Text = Str(captions[i], "text") ?? "",
+                    LastUpdated = i + 1 < captions.Count ? captions[i + 1].GetProperty("time").GetDateTime() : end,
+                };
+                fix?.Invoke(entry);
+                first ??= entry;
+                session.Entries.Add(entry);
+                session.AddToTurns(entry);
+            }
+            if (first != null)
+                marks.Add((first, turn.TryGetProperty("bookmarked", out var b) && b.ValueKind == JsonValueKind.True,
+                    turn.TryGetProperty("highlights", out var h) ? h.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : []));
+        }
+
+        // Stars and highlights are saved per turn; put them back on the turn's captions.
+        foreach (var (first, bookmarked, highlights) in marks)
+        {
+            if (bookmarked) first.IsBookmarked = true;
+            var turn = session.Turns.First(t => t.Entries.Contains(first));
+            foreach (var phrase in highlights) turn.AddHighlight(phrase);
+        }
+        return session;
+
+        static string? Str(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
     }
 
     private void AddToTurns(CaptionEntry entry)

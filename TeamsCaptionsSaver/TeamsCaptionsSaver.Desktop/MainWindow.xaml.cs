@@ -243,7 +243,8 @@ public partial class MainWindow : Window
             var turns = useFilter ? ShownTurns() : null;
             SyncAudioParts();
             var paths = TranscriptExporter.SaveAll(_session, SessionFolder, _settings.FilenamePattern,
-                _settings.AutoSaveFormats.Count > 0 ? _settings.AutoSaveFormats : ["txt"], turns);
+                // JSON is always written too: the meetings list and the minutes are made from it.
+                [.. _settings.AutoSaveFormats.Count > 0 ? _settings.AutoSaveFormats : ["txt"], "json"], turns);
             // A filtered save leaves the rest unsaved, so keep warning about it on close.
             if (!TranscriptExporter.IsFiltered(_session, turns)) _session.HasUnsavedChanges = false;
             Log.Write($"Saved: {string.Join(", ", paths.Select(Path.GetFileName))}");
@@ -484,6 +485,33 @@ public partial class MainWindow : Window
         {
             button.IsEnabled = true;
         }
+    }
+
+    private void OnMeetingsClick(object sender, RoutedEventArgs e)
+    {
+        // Minutes are made from saved transcripts, so save the current one first.
+        if (!_demoMode && _session.HasUnsavedChanges && _session.Entries.Count > 0) SaveAll(useFilter: false, quiet: true);
+        var open = OwnedWindows.OfType<Mom.Ui.MeetingsWindow>().FirstOrDefault();
+        if (open != null) { open.Activate(); return; }
+        new Mom.Ui.MeetingsWindow(_settings) { Owner = this }.Show();
+    }
+
+    private void OnAlwaysAskClick(object sender, RoutedEventArgs e)
+    {
+        if (TranscriptGrid.SelectedItem is not SpeakerTurn turn) return;
+        var name = turn.Speaker;
+        if (_settings.AlwaysAskSpeakers.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            _settings.AlwaysAskSpeakers.RemoveAll(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
+            MessageBox.Show(this, $"\"{name}\" is no longer asked about.", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else
+        {
+            _settings.AlwaysAskSpeakers.Add(name);
+            MessageBox.Show(this, $"Before writing minutes, you'll be asked who \"{name}\" really was.\nChoose this again to stop.",
+                Title, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        _settings.Save();
     }
 
     private void OnRenameSpeakerClick(object sender, RoutedEventArgs e)
